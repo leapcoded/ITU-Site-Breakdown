@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TERRA - roster reporting and editing tool</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+    <style>
+      /* Settings cog: use theme variables so themes style it consistently */
+      .settings-cog { background: var(--color-surface-alt); box-shadow: var(--shadow); border: 1px solid var(--color-border); cursor: pointer; font-size: 18px; }
+      .settings-cog svg { transition: transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1), color 160ms ease; display: block; }
+      .settings-cog:hover svg { transform: rotate(25deg); color: var(--color-primary); }
+      .settings-cog:active svg { transform: rotate(25deg); }
+    </style>
+  <body class="antialiased">
+    <nav class="top-navbar">
+      <div class="w-full max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
+        <div class="flex items-center gap-3 justify-start">
+          <div id="brand-logo" style="display:flex;align-items:center;justify-content:center;">
+            <svg fill="currentColor" viewBox="-2 -3 24 24" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMinYMin" class="jam jam-mountain-f" style="height:44px;width:44px;opacity:0.95"><g id="SVGRepo_bgCarrier" stroke-width="0"></g><g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g><g id="SVGRepo_iconCarrier"><path d="M17.797 10.402c-2.038-.98-5.317-1.604-8.3-1.604-1.828 0-2.951-3.163-3.264-5.235l1.182-2.007a3 3 0 0 1 5.17 0l5.212 8.846zm1.673 2.839l.14.236A3 3 0 0 1 17.024 18H2.975A3 3 0 0 1 .39 13.477l4.517-7.664c.417 2.76 2.144 4.985 4.59 4.985 2.747 0 6.71.536 9.973 2.443z"></path></g></svg>
+          </div>
+          <div class="brand-text">
+            <div class="title text-2xl font-bold">TERRA</div>
+            <div class="subtitle text-sm text-gray-500">roster reporting and editing tool</div>
+          </div>
+        </div>
+        <div class="flex items-center space-x-3 justify-end">
+          <a href="#" id="docs-link" class="text-sm text-blue-600 hover:underline">Read Me</a>
+          <button id="settings-btn" aria-label="Open settings" class="p-3 rounded-full hover:bg-gray-100 settings-cog" title="Settings">
+            <svg class="settings-gear" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" style="height:20px;width:20px;color:var(--color-text-heading);"><g fill="currentColor"><path d="M245.151,168a88,88,0,1,0,88,88A88.1,88.1,0,0,0,245.151,168Zm0,144a56,56,0,1,1,56-56A56.063,56.063,0,0,1,245.151,312Z"></path><path d="M464.7,322.319l-31.77-26.153a193.081,193.081,0,0,0,0-80.332l31.77-26.153a19.941,19.941,0,0,0,4.606-25.439l-32.612-56.483a19.936,19.936,0,0,0-24.337-8.73l-38.561,14.447a192.038,192.038,0,0,0-69.54-40.192L297.49,32.713A19.936,19.936,0,0,0,277.762,16H212.54a19.937,19.937,0,0,0-19.728,16.712L186.05,73.284a192.03,192.03,0,0,0-69.54,40.192L77.945,99.027a19.937,19.937,0,0,0-24.334,8.731L21,164.245a19.94,19.94,0,0,0,4.61,25.438l31.767,26.151a193.081,193.081,0,0,0,0,80.332l-31.77,26.153A19.942,19.942,0,0,0,21,347.758l32.612,56.483a19.937,19.937,0,0,0,24.337,8.73l38.562-14.447a192.03,192.03,0,0,0,69.54,40.192l6.762,40.571A19.937,19.937,0,0,0,212.54,496h65.222a19.936,19.936,0,0,0,19.728-16.712l6.763-40.572a192.038,192.038,0,0,0,69.54-40.192l38.564,14.449a19.938,19.938,0,0,0,24.334-8.731L469.3,347.755A19.939,19.939,0,0,0,464.7,322.319Zm-50.636,57.12-48.109-18.024-7.285,7.334a159.955,159.955,0,0,1-72.625,41.973l-10,2.636L267.6,464h-44.89l-8.442-50.642-10-2.636a159.955,159.955,0,0,1-72.625-41.973l-7.285-7.334L76.241,379.439,53.8,340.562l39.629-32.624-2.7-9.973a160.9,160.9,0,0,1,0-83.93l2.7-9.972L53.8,171.439l22.446-38.878,48.109,18.024,7.285-7.334a159.955,159.955,0,0,1,72.625-41.973l10-2.636L222.706,48H267.6l8.442,50.642,10,2.636a159.955,159.955,0,0,1,72.625,41.973l7.285,7.334,48.109-18.024,22.447,38.877-39.629,32.625,2.7,9.972a160.9,160.9,0,0,1,0,83.93l-2.7,9.973,39.629,32.623Z"></path></g></svg>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <div id="app-root" class="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
+        <div class="w-full max-w-7xl mx-auto">
+            <main id="main-content" class="bg-surface p-6 sm:p-8 rounded-2xl shadow-base-lg w-full main-card">
+                <!-- App content (Step 1 or Step 2) will be rendered here by main.js -->
+            </main>
+        </div>
+    </div>
+    
+    <div id="toast-container"></div>
+    <!-- Modals are dynamically created and appended to the body by main.js -->
+
+    <!-- JS Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+
+    <!-- Main Application Logic -->
+  <script type="module" src="./js/main.js"></script>
+  </body>
+</html>
+
+

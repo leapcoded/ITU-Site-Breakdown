@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TERRA - Smoke Tests</title>
+  <style>
+    body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding: 20px; }
+    .pass { color: #065f46; }
+    .fail { color: #7f1d1d; }
+    pre { background:#f3f4f6; padding:12px; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <h1>TERRA - Smoke Tests</h1>
+  <div id="output"></div>
+  <pre id="log"></pre>
+
+  <script type="module">
+    import { parseDateByLocale, normalizeUKDates, formatByLocale } from '../js/ui.js';
+    import { initDB, dbSave, dbLoadAll, dbDelete, STORES } from '../js/db.js';
+
+    const out = document.getElementById('output');
+    const log = document.getElementById('log');
+    function info(msg) { log.textContent += msg + "\n"; console.log(msg); }
+    function pass(msg) { out.insertAdjacentHTML('beforeend', `<div class='pass'>✓ ${msg}</div>`); info('PASS: ' + msg); }
+    function fail(msg) { out.insertAdjacentHTML('beforeend', `<div class='fail'>✖ ${msg}</div>`); info('FAIL: ' + msg); }
+
+    async function run() {
+      info('Starting smoke tests...');
+
+      // parseDateByLocale tests
+      try {
+        const t1 = parseDateByLocale('12/27/23', 'us');
+        const t2 = parseDateByLocale('27/12/2023', 'uk');
+        const t3 = parseDateByLocale('03/04/2025', 'us'); // ambiguous -> US should interpret as 2025-03-04
+        const t4 = parseDateByLocale('03/04/2025', 'uk'); // ambiguous -> UK should interpret as 2025-04-03
+
+        if (t1 === '2023-12-27') pass('parseDateByLocale US short year'); else fail(`parseDateByLocale US got ${t1}`);
+        if (t2 === '2023-12-27') pass('parseDateByLocale UK long year'); else fail(`parseDateByLocale UK got ${t2}`);
+        if (t3 === '2025-03-04') pass('parseDateByLocale ambiguous interpreted as US when locale=us'); else fail(`parseDateByLocale ambiguous(us) got ${t3}`);
+        if (t4 === '2025-04-03') pass('parseDateByLocale ambiguous interpreted as UK when locale=uk'); else fail(`parseDateByLocale ambiguous(uk) got ${t4}`);
+      } catch (e) {
+        fail('parseDateByLocale threw: ' + e);
+      }
+
+      // normalizeUKDates tests
+      try {
+        const rows = [{Date: '27/12/2023'}, {Date: '1 Jan 2024'}, {Date: new Date('2024-02-02')}];
+        const norm = normalizeUKDates(rows);
+        const ok1 = norm[0].Date === '2023-12-27';
+        const ok2 = norm[1].Date === '2024-01-01';
+        const ok3 = norm[2].Date === '2024-02-02';
+        if (ok1 && ok2 && ok3) pass('normalizeUKDates basic formats'); else fail('normalizeUKDates results: ' + JSON.stringify(norm));
+      } catch (e) { fail('normalizeUKDates threw: ' + e); }
+
+      // formatByLocale tests
+      try {
+        const f1 = formatByLocale('2023-12-27', 'uk');
+        const f2 = formatByLocale('2023-12-27', 'us');
+        if (f1 === '27/12/2023') pass('formatByLocale UK'); else fail('formatByLocale UK -> ' + f1);
+        if (f2 === '12/27/2023') pass('formatByLocale US'); else fail('formatByLocale US -> ' + f2);
+      } catch (e) { fail('formatByLocale threw: ' + e); }
+
+      // IndexedDB tests: save/load/delete
+      try {
+        await initDB();
+        info('DB initialized');
+        const testItem = { name: 'smoke-test-item', isParsedFile: true, dataRows: [{ Smoke: 'yes' }], headers: ['Smoke'] };
+        const id = await dbSave(STORES.FILES, testItem);
+        info('Saved test item id=' + id);
+        const files = await dbLoadAll(STORES.FILES);
+        const found = files.find(f => f.id === id || f.name === 'smoke-test-item');
+        if (found) pass('dbSave + dbLoadAll found saved item'); else fail('dbSave/dbLoadAll did not find item');
+        // cleanup
+        await dbDelete(STORES.FILES, id);
+        pass('dbDelete removed test item');
+      } catch (e) { fail('IndexedDB test failed: ' + e); }
+
+      // Notes formatting preservation test
+      try {
+        const note = { name: 'smoke-note', isNote: true, content: 'Line1\nLine2\nLine3', categoryName: 'Smoke' };
+        const nid = await dbSave(STORES.NOTES, note);
+        const notes = await dbLoadAll(STORES.NOTES);
+        const foundNote = notes.find(n => n.id === nid || n.name === 'smoke-note');
+        if (foundNote && foundNote.content === note.content) pass('Note newline preservation'); else fail('Note content mismatch: ' + JSON.stringify(foundNote));
+        await dbDelete(STORES.NOTES, nid);
+      } catch (e) { fail('Notes test failed: ' + e); }
+
+      // Locale override persistence test
+      try {
+        const pf = { name: 'smoke-locale-file', isParsedFile: true, dataRows: [{ Date: '12/27/23' }], headers: ['Date'], _locale: 'us', _locale_overridden: true };
+        const pid = await dbSave(STORES.FILES, pf);
+        const files2 = await dbLoadAll(STORES.FILES);
+        const foundPf = files2.find(f => f.id === pid || f.name === 'smoke-locale-file');
+        if (foundPf && foundPf._locale === 'us' && foundPf._locale_overridden) pass('Locale override persisted'); else fail('Locale override not persisted: ' + JSON.stringify(foundPf));
+        await dbDelete(STORES.FILES, pid);
+      } catch (e) { fail('Locale override test failed: ' + e); }
+
+      info('Smoke tests complete');
+    }
+
+    run();
+  </script>
+</body>
+</html>
