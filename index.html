@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TERRA - roster reporting and editing tool</title>
+    <meta name="description" content="TERRA — a small roster reporting and editing tool. Parse CSV/XLSX files, build reports, and run alerts locally in the browser." />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!-- Tailwind CSS for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Fonts: Inter -->
@@ -21,6 +24,7 @@
       .settings-cog:active svg { transform: rotate(25deg); }
     </style>
   <body class="antialiased">
+    <a href="#main-content" class="sr-only focusable-skip">Skip to main content</a>
     <nav class="top-navbar">
       <div class="w-full max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 lg:px-8">
         <div class="flex items-center gap-3 justify-start">
@@ -41,9 +45,9 @@
       </div>
     </nav>
 
-    <div id="app-root" class="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
+  <div id="app-root" class="min-h-screen flex flex-col items-center p-4 sm:p-6 lg:p-8">
         <div class="w-full max-w-7xl mx-auto">
-            <main id="main-content" class="bg-surface p-6 sm:p-8 rounded-2xl shadow-base-lg w-full main-card">
+      <main id="main-content" class="bg-surface p-6 sm:p-8 rounded-2xl shadow-base-lg w-full main-card" role="main" tabindex="-1">
                 <!-- App content (Step 1 or Step 2) will be rendered here by main.js -->
             </main>
         </div>
@@ -53,13 +57,13 @@
     <!-- Modals are dynamically created and appended to the body by main.js -->
 
     <!-- JS Libraries -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.23/jspdf.plugin.autotable.min.js" defer></script>
 
     <!-- Main Application Logic -->
-  <script type="module" src="./js/main.js"></script>
+  <script type="module" src="./js/main.js" defer></script>
   </body>
 </html>
 

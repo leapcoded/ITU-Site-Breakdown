@@ -270,6 +270,17 @@ body {
 .preserve-whitespace { white-space: pre-wrap; word-break: break-word; }
 .sr-only { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
 
+/* Skip link visible when focused */
+.focusable-skip { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 999; }
+.focusable-skip:focus, .focusable-skip:active { left: 16px; top: 12px; width: auto; height: auto; padding: 8px 12px; background: var(--color-surface); color: var(--color-text-heading); border: 1px solid var(--color-border); border-radius: 6px; box-shadow: var(--shadow); text-decoration: none; }
+
+/* Use the modern focus-visible heuristic when available; fallback to :focus */
+*:focus { outline: none; }
+*:focus-visible { outline: 3px solid var(--color-primary); outline-offset: 3px; border-radius: 6px; }
+
+/* Make interactive elements have a clear visible focus state */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--opal-1); }
+
 /* Drag & drop visual targets for category reordering */
 .category-box.drop-target-before { border-top: 3px solid var(--color-primary); }
 .category-box.drop-target-after { border-bottom: 3px solid var(--color-primary); }
