@@ -7,6 +7,15 @@ function escapeHtml(s) {
     return String(s == null ? '' : s).replace(/[&<>"]/g, function (m) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]; });
 }
 
+// Local ISO helper to format a Date into YYYY-MM-DD using local timezone components
+function toLocalIsoUI(dt) {
+    if (!(dt instanceof Date) || isNaN(dt)) return null;
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+}
+
 // Simple modal factory to centralize modal creation and reuse
 let draggingCategoryId = null;
 function createSimpleModal(id, title) {
@@ -568,7 +577,7 @@ function parseFile(file) {
     return new Promise((resolve, reject) => {
         if (file.name.endsWith('.csv')) {
             window.Papa.parse(file, { header: true, skipEmptyLines: true, complete: res => {
-                const data = normalizeUKDates(res.data);
+                const data = normalizeFileDates(res.data, 'auto');
                 resolve(data);
             }, error: reject });
         } else if (file.name.endsWith('.xlsx')) {
@@ -578,7 +587,7 @@ function parseFile(file) {
                 const sheet = workbook.Sheets[workbook.SheetNames[0]];
                 // request formatted output then normalize dates
                 const raw = window.XLSX.utils.sheet_to_json(sheet, { raw: false, dateNF: 'yyyy-mm-dd' });
-                const data = normalizeUKDates(raw);
+                const data = normalizeFileDates(raw, 'auto');
                 resolve(data);
             };
             reader.onerror = reject;
@@ -589,66 +598,61 @@ function parseFile(file) {
     });
 }
 
-// Convert UK-style date strings (DD/MM/YYYY, DD-MM-YYYY, D MMM YYYY) and Date objects to ISO YYYY-MM-DD strings
-function normalizeUKDates(rows) {
+// Locale-aware normalization for file rows. Converts date-like cells to ISO YYYY-MM-DD for storage.
+// Uses parseDateByLocale to interpret ambiguous slashed dates according to the provided locale (or 'auto').
+function normalizeFileDates(rows, locale = 'auto') {
     if (!Array.isArray(rows)) return rows;
-    const monthNames = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
-    const ukRegex = /^\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*$/;
     return rows.map(row => {
         const out = { ...row };
         Object.keys(out).forEach(k => {
             const v = out[k];
             if (v == null) return;
+            // Preserve already-correct ISO strings
+            if (typeof v === 'string' && /^\s*\d{4}-\d{2}-\d{2}\s*$/.test(v)) {
+                out[k] = v.trim();
+                return;
+            }
             if (v instanceof Date) {
-                const d = v.getDate().toString().padStart(2,'0');
-                const m = (v.getMonth()+1).toString().padStart(2,'0');
-                const y = v.getFullYear();
-                out[k] = `${d}/${m}/${y}`;
+                out[k] = toLocalIsoUI(v);
                 return;
             }
             if (typeof v === 'string') {
-                const m = v.match(ukRegex);
-                if (m) {
-                    let day = parseInt(m[1], 10);
-                    let month = parseInt(m[2], 10);
-                    let year = parseInt(m[3], 10);
-                    if (year < 100) year += year >= 50 ? 1900 : 2000;
-                    const dateObj = new Date(year, month - 1, day);
-                    if (!isNaN(dateObj.getTime()) && dateObj.getFullYear() === year && dateObj.getMonth() === month - 1 && dateObj.getDate() === day) {
-                        const dd = String(day).padStart(2,'0');
-                        const mm = String(month).padStart(2,'0');
-                        const yyyy = String(year).padStart(4,'0');
-                        out[k] = `${dd}/${mm}/${yyyy}`;
-                        return;
-                    }
-                }
-                // Try formats like '1 Jan 2025' or '01 January 2025'
-                const m2 = v.match(/^\s*(\d{1,2})\s+([A-Za-z]{3,})\.?,?\s+(\d{4})\s*$/);
-                if (m2) {
-                    const day = parseInt(m2[1], 10);
-                    const monthName = m2[2].toLowerCase().slice(0,3);
-                    const year = parseInt(m2[3], 10);
-                    const mi = monthNames.indexOf(monthName);
-                    if (mi !== -1) {
-                        const dateObj = new Date(year, mi, day);
-                        if (!isNaN(dateObj.getTime())) {
-                            const dd = String(day).padStart(2,'0');
-                            const mm = String(mi+1).padStart(2,'0');
-                            const yyyy = String(year).padStart(4,'0');
-                            out[k] = `${dd}/${mm}/${yyyy}`;
+                const s = v.trim();
+                // Try canonical parse using locale-aware parser
+                try {
+                    const canonical = parseDateByLocale(s, locale);
+                    if (canonical) {
+                        const m = canonical.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+                        if (m) {
+                            const d = m[1].padStart(2,'0');
+                            const mo = m[2].padStart(2,'0');
+                            let yy = m[3];
+                            if (yy.length === 2) yy = (parseInt(yy,10) > 50 ? '19' + yy : '20' + yy);
+                            out[k] = `${yy}-${mo}-${d}`; // ISO
+                            return;
                         }
                     }
+                } catch (e) {
+                    // fall through to Date.parse fallback
+                }
+                // final fallback: try Date.parse and convert to ISO if valid
+                const t = Date.parse(s);
+                if (!Number.isNaN(t)) {
+                    out[k] = toLocalIsoUI(new Date(t));
+                    return;
                 }
             }
         });
         return out;
     });
 }
+// keep a compatibility alias for previous name
+const normalizeUKDates = normalizeFileDates;
 // export helper so stored files can be normalized on load
-export { normalizeUKDates };
+export { normalizeFileDates, normalizeUKDates };
 
 // Export small helpers used by other modules
-export { handleFiles, rehydrateItem };
+export { handleFiles, rehydrateItem, parseFile };
 
 // --- Customization / Report generation ---
 export function processAllDataAndDisplay() {
@@ -1371,13 +1375,13 @@ function formatToUK(val) {
     }
     return String(val);
 }
-    // Parse a date-like string according to locale preference and return canonical DD/MM/YYYY or null
+    // Parse a date-like string according to locale preference and return canonical ISO YYYY-MM-DD or null
     export function parseDateByLocale(str, locale = 'uk') {
         if (!str || typeof str !== 'string') return null;
         const s = str.trim();
-        // already ISO-like -> convert to DD/MM/YYYY
+        // already ISO-like -> return ISO
         const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        const toDD = (y, m, d) => `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${String(y).padStart(4,'0')}`;
+        const toISO = (y, m, d) => `${String(y).padStart(4,'0')}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const normYear = (y) => { if (y < 100) return y + (y > 50 ? 1900 : 2000); return y; };
         const valid = (y, m, d) => { const dt = new Date(y, m - 1, d); return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d; };
 
@@ -1385,10 +1389,12 @@ function formatToUK(val) {
             const y = parseInt(isoMatch[1], 10);
             const m = parseInt(isoMatch[2], 10);
             const d = parseInt(isoMatch[3], 10);
-            if (valid(y, m, d)) return toDD(y, m, d);
+            if (valid(y, m, d)) return toISO(y, m, d);
         }
 
-        const loc = (locale || 'uk').toString().toLowerCase();
+    const loc = (locale || 'uk').toString().toLowerCase();
+    // If locale === 'auto' or ambiguous detection, consult user preference for ambiguous slashed dates
+    const userAmbig = (typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('TERRA_DATE_AMBIGUOUS')) ? window.localStorage.getItem('TERRA_DATE_AMBIGUOUS') : 'auto';
 
         // Numeric slashed dates like 03/04/2024
         const slashMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
@@ -1398,38 +1404,43 @@ function formatToUK(val) {
             let y = normYear(parseInt(slashMatch[3], 10));
 
             const tryUk = () => { // DD/MM/YYYY -> day=a, month=b
-                if (valid(y, b, a)) return toDD(y, b, a);
+                if (valid(y, b, a)) return toISO(y, b, a);
                 return null;
             };
             const tryUs = () => { // MM/DD/YYYY -> month=a, day=b
-                if (valid(y, a, b)) return toDD(y, a, b);
+                if (valid(y, a, b)) return toISO(y, a, b);
                 return null;
             };
 
             if (loc === 'uk') {
                 const r = tryUk();
-                if (r) return r;
-                return tryUs(); // fallback if UK parse invalid
+                if (r) return toISO(y = normYear(y), b, a); // convert to ISO
+                const ru = tryUs(); if (ru) return toISO(y = normYear(y), a, b);
+                return null;
             }
             if (loc === 'us') {
                 const r = tryUs();
-                if (r) return r;
-                return tryUk();
+                if (r) return toISO(y = normYear(y), a, b);
+                const ru = tryUk(); if (ru) return toISO(y = normYear(y), b, a);
+                return null;
             }
 
-            // auto: if one part > 12 it's the day; otherwise try both preferring UK
+            // auto: if one part > 12 it's the day; otherwise decide according to user preference
             if (a > 12 && b <= 12) {
                 return tryUk();
             }
             if (b > 12 && a <= 12) {
                 return tryUs();
             }
-            // ambiguous (both <=12): prefer UK but validate
-            const rUk = tryUk();
-            if (rUk) return rUk;
-            const rUs = tryUs();
-            if (rUs) return rUs;
-            return null;
+            // ambiguous (both <=12): consult user preference
+            if (userAmbig === 'uk') {
+                const rUk = tryUk(); if (rUk) return toISO(y = normYear(y), b, a); const rUs = tryUs(); if (rUs) return toISO(y = normYear(y), a, b); return null;
+            }
+            if (userAmbig === 'us') {
+                const rUs = tryUs(); if (rUs) return toISO(y = normYear(y), a, b); const rUk = tryUk(); if (rUk) return toISO(y = normYear(y), b, a); return null;
+            }
+            // default: prefer UK as a sensible fallback
+            const rUk = tryUk(); if (rUk) return toISO(y = normYear(y), b, a); const rUs = tryUs(); if (rUs) return toISO(y = normYear(y), a, b); return null;
         }
 
         // Formats like '12 Jan 2025' or 'Jan 12, 2025'
@@ -1442,7 +1453,7 @@ function formatToUK(val) {
             if (mi !== -1) {
                 const month = mi + 1;
                 const year = parseInt(dayMonthName[3], 10);
-                if (valid(year, month, day)) return toDD(year, month, day);
+                if (valid(year, month, day)) return toISO(year, month, day);
             }
         }
         const monthDayName = s.match(/^\s*([A-Za-z]{3,})\.?\,?\s*(\d{1,2}),?\s*(\d{4})\s*$/);
@@ -1454,7 +1465,7 @@ function formatToUK(val) {
             if (mi !== -1) {
                 const month = mi + 1;
                 const year = parseInt(monthDayName[3], 10);
-                if (valid(year, month, day)) return toDD(year, month, day);
+                if (valid(year, month, day)) return toISO(year, month, day);
             }
         }
 
@@ -1462,7 +1473,7 @@ function formatToUK(val) {
         const parsed = Date.parse(s);
         if (!Number.isNaN(parsed)) {
             const dt = new Date(parsed);
-            return toDD(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+            return toISO(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
         }
         return null;
     }

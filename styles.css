@@ -241,9 +241,25 @@ body {
 /* Settings cog: handled in index.html (preferred hover/active rules). Remove legacy wiggle/spin here to avoid conflicts. */
 
 /* Modal */
-.modal-backdrop { position: fixed; inset: 0; background: var(--overlay); display: none; align-items: center; justify-content: center; z-index: 180; }
+.modal-backdrop { position: fixed; inset: 0; background: var(--overlay); display: none; align-items: center; justify-content: center; z-index: 180; box-sizing: border-box; padding: 16px; }
 .modal-backdrop.active { display: flex; }
-.modal { background: var(--color-surface); color: var(--color-text); border-radius: 8px; max-width: 720px; width: 95%; padding: 20px; box-shadow: var(--shadow-lg); }
+.modal { background: var(--color-surface); color: var(--color-text); border-radius: 8px; max-width: 960px; width: 95%; padding: 20px; box-shadow: var(--shadow-lg); box-sizing: border-box; max-height: 90vh; overflow: auto; }
+
+/* Modal internals: constrain long modal bodies so content scrolls inside the modal rather than overflowing viewport */
+.modal .modal-body { max-height: calc(90vh - 120px); overflow: auto; }
+
+/* Table truncation helper: use inside table cells to ellipsize long values while keeping title tooltips */
+.truncate-inline { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+
+/* Small status badges used in Alerts */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; line-height: 1; color: white; }
+.badge.green { background: #16a34a; }
+.badge.red { background: #ef4444; }
+.badge.gray { background: #6b7280; }
+
+/* compact table row actions */
+.row-action { background: transparent; border: 1px solid var(--color-border); padding: 4px 6px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+.row-action:hover { background: var(--color-surface-hover); }
 
 /* Toast */
 .toast-container { position: fixed; right: 20px; bottom: 20px; z-index: 70; display: flex; flex-direction: column; gap: 8px; }

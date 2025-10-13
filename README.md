@@ -107,6 +107,16 @@ Credits & version
 
 ---
 
+Cleanup performed on 2025-10-12:
+- Removed legacy/duplicate JS files not referenced by `index.html`.
+- Removed Node artifacts (`node_modules/` and `package-lock.json`) to trim the repository. To restore the Node environment, run `npm install`.
+
+Additionally on 2025-10-12:
+- Removed ESLint and Prettier configuration files and devDependencies from `package.json` because linting/formatting is not required in this browser-only repo. If you want to re-enable them, restore `package.json` or add the devDependencies then run `npm install` and re-create configs.
+
+Date handling change (2025-10-12):
+- Canonical internal date representation has been switched to ISO format (YYYY-MM-DD). The app still displays dates to users according to the selected display locale (UK or US) but all internal storage and alert/filter matching use ISO to avoid ambiguity.
+
 If you'd like, I can also:
 - Convert this Read Me into an in-app full page (instead of a modal) and link the "Read Me" nav item to it.
 - Add a printable PDF of this Read Me accessible from the app UI.

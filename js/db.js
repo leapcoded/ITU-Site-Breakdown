@@ -1,7 +1,7 @@
 // Database operations module
 const DB_NAME = 'TERRA_DB';
-const DB_VERSION = 1;
-export const STORES = { NOTES: 'notes', IMAGES: 'images', FILES: 'files' };
+const DB_VERSION = 2; // bump DB version to create new store for alerts/rules
+export const STORES = { NOTES: 'notes', IMAGES: 'images', FILES: 'files', RULES: 'rules' };
 
 export let db = null;
 
@@ -103,6 +103,43 @@ export function dbClear(store) {
         } catch (e) {
             if (e && e.name === 'InvalidStateError') {
                 try { await initDB(); const tx = db.transaction(store, 'readwrite'); const storeObj = tx.objectStore(store); const req = storeObj.clear(); req.onsuccess = () => resolve(); req.onerror = (err) => reject(err); } catch (e2) { reject(e2); }
+            } else reject(e);
+        }
+    });
+}
+
+// Remove null/undefined or non-object records from a store. Useful as a migration/cleanup step.
+export function cleanNullishRecords(store) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            await ensureDB();
+            const tx = db.transaction([store], 'readwrite');
+            const storeObj = tx.objectStore(store);
+            const req = storeObj.openCursor();
+            req.onsuccess = (e) => {
+                const cursor = e.target.result;
+                if (!cursor) {
+                    resolve();
+                    return;
+                }
+                try {
+                    const val = cursor.value;
+                    // delete entries that are null/undefined or not plain objects
+                    if (val == null || typeof val !== 'object') {
+                        const del = cursor.delete();
+                        del.onsuccess = () => { console.debug('db: removed nullish record in', store); };
+                        del.onerror = () => { console.warn('db: failed to delete nullish record in', store); };
+                    }
+                } catch (err) {
+                    // if inspecting the value throws, attempt to delete defensively
+                    try { cursor.delete(); } catch (e) { /* ignore */ }
+                }
+                cursor.continue();
+            };
+            req.onerror = (e) => reject(e.target ? e.target.error : e);
+        } catch (e) {
+            if (e && e.name === 'InvalidStateError') {
+                try { await initDB(); return cleanNullishRecords(store).then(resolve).catch(reject); } catch (e2) { reject(e2); }
             } else reject(e);
         }
     });
