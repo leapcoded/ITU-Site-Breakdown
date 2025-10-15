@@ -1802,7 +1802,6 @@ function computeRTWStats(files, rows) {
     </div>
     `;
 
-        // Insert this immediately after the summary.innerHTML = `...` line that renders the RTW summary
     (function updateNmcPinsCard() {
     try {
         const nmcEl = (typeof resultsEl !== 'undefined' && resultsEl && resultsEl.querySelector)
@@ -1810,17 +1809,18 @@ function computeRTWStats(files, rows) {
         : document.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50') || document.querySelector('.nmc-summary');
         if (!nmcEl) return;
 
-        // Try to find a numeric count in existing text as fallback
+        // Extract a numeric count if present, otherwise use placeholder
         const rawText = (nmcEl.textContent || '').trim();
         const found = rawText.match(/(\d+)\s*(pins?|expir)/i);
         const nmcCount = found ? Number(found[1]) : (typeof window.__nmcCount !== 'undefined' ? window.__nmcCount : '—');
 
+        // Replace with markup matching the RTW card style exactly (compact fonts, pill count)
         nmcEl.innerHTML = `
-        <div style="display:flex;gap:10px;align-items:center;min-width:260px;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;box-sizing:border-box;height:64px">
+        <div style="font-size:13px;display:flex;gap:10px;align-items:center;min-width:260px;padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;box-sizing:border-box;height:64px">
             <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:160px">
-            <div style="font-size:13px;font-weight:600;color:var(--color-text)">NMC Pins <span style="font-size:11px;color:var(--color-text-muted);margin-left:6px">Alert</span></div>
+            <div style="font-size:13px;font-weight:600;color:var(--color-text);line-height:1">NMC Pins <span style="font-weight:500;font-size:11px;color:var(--color-text-muted);margin-left:6px">Alert</span></div>
             <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
-                <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b85705">${escapeHtml(String(nmcCount))}</div>
+                <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b85705;font-size:14px">${escapeHtml(String(nmcCount))}</div>
                 <div style="font-size:12px;color:var(--color-text-muted)">pins expiring soon</div>
             </div>
             </div>
@@ -1830,14 +1830,16 @@ function computeRTWStats(files, rows) {
         </div>
         `.trim();
 
-        // Wire the new button to existing handler if available
+        // Wire the new Show list button to existing handler if available
         const btn = nmcEl.querySelector('#nmc-expiry-show');
         if (btn) {
         btn.addEventListener('click', (ev) => {
             try {
             ev.preventDefault();
+            // If original export/show button exists, trigger it (keeps existing behavior)
             const existing = document.querySelector('#nmc-expiry-export') || document.querySelector('#nmc-expiry-show-existing');
             if (existing) { existing.click(); return; }
+            // otherwise dispatch custom event for any listeners
             const evt = new CustomEvent('nmc:show');
             nmcEl.dispatchEvent(evt);
             } catch (e) { /* ignore */ }
