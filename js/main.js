@@ -1759,7 +1759,7 @@ function computeRTWStats(files, rows) {
     summary.innerHTML = `
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <!-- Main card: title + brief metrics -->
-        <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:220px;box-sizing:border-box">
+        <div style="display:flex;flex-direction:column;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:220px;box-sizing:border-box">
         <div style="display:flex;align-items:center;gap:8px">
             <div style="width:10px;height:10px;border-radius:999px;background:${statusColor || '#f59e0b'}"></div>
             <div style="font-size:13px;font-weight:600;line-height:1">${escapeHtml('RTW Summary')} <span style="font-weight:500;font-size:11px;color:var(--color-text-muted)">(${escapeHtml(String(statusLabel))})</span></div>
@@ -1777,22 +1777,14 @@ function computeRTWStats(files, rows) {
         </div>
 
         <!-- Missing RTW card -->
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box">
         <div style="font-size:11px;color:var(--color-text-muted)">Missing RTW</div>
         <div style="font-weight:700;color:#b91c1c;font-size:14px">${urgentCount}</div>
         </div>
 
-        <!-- Ignored duties card (if any) -->
-        <div style="display:flex;flex-direction:column;align-items:center;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;min-width:140px;box-sizing:border-box">
-        <div style="font-size:11px;color:var(--color-text-muted)">Ignored duties</div>
-        <div style="font-size:12px;color:var(--color-text)">${escapeHtml(String(ignoredTotal || (ignoredBadge ? 1 : 0))) || ''} ${ignoredBadge ? '' : ''}</div>
-        <div style="font-size:10px;color:var(--color-text-muted);margin-top:4px">${escapeHtml(String(ignoredBreakdown || ''))}</div>
-        </div>
-
-        <!-- Actions: keep compact buttons at the end -->
+        <!-- Actions: compact Show list button aligned to the right -->
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <button id="alerts-show-no-rtw" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Show list</button>
-        <button id="alerts-show-ignored" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Ignored duties</button>
         </div>
     </div>
     `;
