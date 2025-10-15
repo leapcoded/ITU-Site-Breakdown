@@ -1757,31 +1757,42 @@ function computeRTWStats(files, rows) {
     const urgentCount = noRtw.length;
 
     summary.innerHTML = `
-    <div class="flex items-start justify-between gap-4">
-        <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-3">
-            ${pill}
-            <div>
-            <div class="font-semibold">RTW Summary <span class="text-sm text-subtle">(${statusLabel})</span></div>
-            <div class="text-xs text-subtle mt-0.5">Overview of staff return-to-work status</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <!-- Main card: title + brief metrics -->
+        <div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:220px;box-sizing:border-box">
+        <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:10px;height:10px;border-radius:999px;background:${statusColor || '#f59e0b'}"></div>
+            <div style="font-size:13px;font-weight:600;line-height:1">${escapeHtml('RTW Summary')} <span style="font-weight:500;font-size:11px;color:var(--color-text-muted)">(${escapeHtml(String(statusLabel))})</span></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--color-text);">
+            <div style="display:flex;flex-direction:column;align-items:flex-start">
+            <div style="font-weight:700;font-size:14px">${hadShift.length}</div>
+            <div style="font-size:11px;color:var(--color-text-muted)">had a shift</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:flex-start">
+            <div style="font-weight:700;font-size:14px">${completed} <span style="font-weight:600;font-size:12px;color:var(--color-text-muted)">(${completedPct}%)</span></div>
+            <div style="font-size:11px;color:var(--color-text-muted)">RTW recorded</div>
             </div>
         </div>
-
-        <div class="mt-3 text-sm space-y-1">
-            <div><strong>${hadShift.length}</strong> staff had a shift after sickness end</div>
-            <div>RTW recorded: <strong>${completed}</strong> (<strong>${completedPct}%</strong>)</div>
-            <div class="text-xs text-subtle">Total considered: <strong>${hadShift.length}</strong></div>
-        </div>
         </div>
 
-        <div class="text-right flex flex-col items-end gap-2">
-        <div class="text-sm text-muted">Missing RTW: <strong style="color:#b91c1c">${urgentCount}</strong></div>
-        <div class="flex items-center gap-2 mt-2">
-            <button id="alerts-show-no-rtw" class="px-2 py-1 border rounded text-sm">Show list</button>
-            <button id="alerts-show-ignored" class="px-2 py-1 border rounded text-sm">Ignored duties</button>
-            ${ignoredBadge || ''}
+        <!-- Missing RTW card -->
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box">
+        <div style="font-size:11px;color:var(--color-text-muted)">Missing RTW</div>
+        <div style="font-weight:700;color:#b91c1c;font-size:14px">${urgentCount}</div>
         </div>
-        <div class="text-xs text-subtle mt-1">${ignoredBreakdown || ''}</div>
+
+        <!-- Ignored duties card (if any) -->
+        <div style="display:flex;flex-direction:column;align-items:center;padding:8px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;min-width:140px;box-sizing:border-box">
+        <div style="font-size:11px;color:var(--color-text-muted)">Ignored duties</div>
+        <div style="font-size:12px;color:var(--color-text)">${escapeHtml(String(ignoredTotal || (ignoredBadge ? 1 : 0))) || ''} ${ignoredBadge ? '' : ''}</div>
+        <div style="font-size:10px;color:var(--color-text-muted);margin-top:4px">${escapeHtml(String(ignoredBreakdown || ''))}</div>
+        </div>
+
+        <!-- Actions: keep compact buttons at the end -->
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <button id="alerts-show-no-rtw" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Show list</button>
+        <button id="alerts-show-ignored" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Ignored duties</button>
         </div>
     </div>
     `;
