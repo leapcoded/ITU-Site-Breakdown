@@ -1755,7 +1755,36 @@ function computeRTWStats(files, rows) {
     const ignoredBadge = ignoredTotal ? `<span title="Ignored duties" style="display:inline-block;background:#ef4444;color:white;padding:2px 6px;border-radius:999px;margin-left:8px;font-size:0.8em">${ignoredTotal}</span>` : '';
     const ignoredBreakdown = ignoredTotal ? ` (${Object.entries(ignoredCounts).map(([k,v])=>`${k}: ${v}`).join(', ')})` : '';
     const urgentCount = noRtw.length;
-    summary.innerHTML = `<div class="flex items-center justify-between"><div><strong>RTW Summary</strong> (${statusLabel}) — ${hadShift.length} staff had a shift after sickness end. RTW recorded: ${completed} (${completedPct}%).</div><div class="text-sm text-muted">Missing RTW: <strong style="color:#b91c1c">${urgentCount}</strong></div></div><div class="mt-2 text-sm">${pill} <button id="alerts-show-no-rtw" class="px-2 py-1 ml-2 border rounded text-sm">Show list</button> <button id="alerts-show-ignored" class="px-2 py-1 ml-2 border rounded text-sm">Ignored duties</button>${ignoredBadge}<span class="text-subtle text-xs ml-2">${ignoredBreakdown}</span></div>`;
+
+    summary.innerHTML = `
+    <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-3">
+            ${pill}
+            <div>
+            <div class="font-semibold">RTW Summary <span class="text-sm text-subtle">(${statusLabel})</span></div>
+            <div class="text-xs text-subtle mt-0.5">Overview of staff return-to-work status</div>
+            </div>
+        </div>
+
+        <div class="mt-3 text-sm space-y-1">
+            <div><strong>${hadShift.length}</strong> staff had a shift after sickness end</div>
+            <div>RTW recorded: <strong>${completed}</strong> (<strong>${completedPct}%</strong>)</div>
+            <div class="text-xs text-subtle">Total considered: <strong>${hadShift.length}</strong></div>
+        </div>
+        </div>
+
+        <div class="text-right flex flex-col items-end gap-2">
+        <div class="text-sm text-muted">Missing RTW: <strong style="color:#b91c1c">${urgentCount}</strong></div>
+        <div class="flex items-center gap-2 mt-2">
+            <button id="alerts-show-no-rtw" class="px-2 py-1 border rounded text-sm">Show list</button>
+            <button id="alerts-show-ignored" class="px-2 py-1 border rounded text-sm">Ignored duties</button>
+            ${ignoredBadge || ''}
+        </div>
+        <div class="text-xs text-subtle mt-1">${ignoredBreakdown || ''}</div>
+        </div>
+    </div>
+    `;
     // keep `summary` element available; it will be placed into the unified alert bar below
     // wire ignored button immediately so users don't need to click 'Show list' first
         const ignoredBtnImmediate = resultsEl.querySelector('#alerts-show-ignored');
