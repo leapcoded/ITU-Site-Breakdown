@@ -1757,9 +1757,9 @@ function computeRTWStats(files, rows) {
     const urgentCount = noRtw.length;
 
     summary.innerHTML = `
-    <div role="region" aria-label="RTW summary" style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:420px">
+    <div role="region" aria-label="RTW summary" style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:420px;padding:6px;border-radius:10px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);box-sizing:border-box">
         <!-- Left card: Title + two metric tiles -->
-        <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:300px;box-sizing:border-box;height:64px">
+        <div style="display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:8px;background:transparent;min-width:300px;box-sizing:border-box;height:64px">
         <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:160px">
             <div style="display:flex;align-items:center;gap:8px;">
             <div aria-hidden="true" style="width:10px;height:10px;border-radius:999px;background:${statusColor || '#f59e0b'}"></div>
@@ -1767,11 +1767,11 @@ function computeRTWStats(files, rows) {
             <div style="margin-left:6px;font-size:11px;color:var(--color-text-muted)">${escapeHtml(String(statusLabel))}</div>
             </div>
             <div style="display:flex;gap:8px;margin-top:6px">
-            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;background:transparent;min-width:90px">
+            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;min-width:90px">
                 <div style="font-weight:700;font-size:14px;color:var(--color-text)">${hadShift.length}</div>
                 <div style="font-size:11px;color:var(--color-text-muted)">had a shift</div>
             </div>
-            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;background:transparent;min-width:120px">
+            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;min-width:120px">
                 <div style="display:flex;align-items:center;gap:8px">
                 <div style="font-weight:700;font-size:14px;color:var(--color-text)">${completed}</div>
                 <div style="font-size:12px;color:var(--color-text-muted)">RTW</div>
@@ -1787,7 +1787,7 @@ function computeRTWStats(files, rows) {
         </div>
 
         <!-- Right card: Missing RTW -->
-        <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;padding:8px 12px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box;height:64px">
+        <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;padding:8px 12px;border-radius:8px;background:#fff7f7;min-width:120px;box-sizing:border-box;height:64px">
         <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px">Missing RTW</div>
         <div style="display:flex;align-items:center;gap:8px">
             <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b91c1c">${urgentCount}</div>
@@ -1801,6 +1801,50 @@ function computeRTWStats(files, rows) {
         </div>
     </div>
     `;
+
+        // Insert this immediately after the summary.innerHTML = `...` line that renders the RTW summary
+    (function updateNmcPinsCard() {
+    try {
+        const nmcEl = (typeof resultsEl !== 'undefined' && resultsEl && resultsEl.querySelector)
+        ? resultsEl.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50') || resultsEl.querySelector('.nmc-summary')
+        : document.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50') || document.querySelector('.nmc-summary');
+        if (!nmcEl) return;
+
+        // Try to find a numeric count in existing text as fallback
+        const rawText = (nmcEl.textContent || '').trim();
+        const found = rawText.match(/(\d+)\s*(pins?|expir)/i);
+        const nmcCount = found ? Number(found[1]) : (typeof window.__nmcCount !== 'undefined' ? window.__nmcCount : '—');
+
+        nmcEl.innerHTML = `
+        <div style="display:flex;gap:10px;align-items:center;min-width:260px;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;box-sizing:border-box;height:64px">
+            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:160px">
+            <div style="font-size:13px;font-weight:600;color:var(--color-text)">NMC Pins <span style="font-size:11px;color:var(--color-text-muted);margin-left:6px">Alert</span></div>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+                <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b85705">${escapeHtml(String(nmcCount))}</div>
+                <div style="font-size:12px;color:var(--color-text-muted)">pins expiring soon</div>
+            </div>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center">
+            <button id="nmc-expiry-show" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Show list</button>
+            </div>
+        </div>
+        `.trim();
+
+        // Wire the new button to existing handler if available
+        const btn = nmcEl.querySelector('#nmc-expiry-show');
+        if (btn) {
+        btn.addEventListener('click', (ev) => {
+            try {
+            ev.preventDefault();
+            const existing = document.querySelector('#nmc-expiry-export') || document.querySelector('#nmc-expiry-show-existing');
+            if (existing) { existing.click(); return; }
+            const evt = new CustomEvent('nmc:show');
+            nmcEl.dispatchEvent(evt);
+            } catch (e) { /* ignore */ }
+        });
+        }
+    } catch (e) { /* safe no-op */ }
+    })();
     // keep `summary` element available; it will be placed into the unified alert bar below
     // wire ignored button immediately so users don't need to click 'Show list' first
         const ignoredBtnImmediate = resultsEl.querySelector('#alerts-show-ignored');
