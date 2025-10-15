@@ -1857,6 +1857,75 @@ function computeRTWStats(files, rows) {
         /* safe no-op */
     }
     })();
+
+    (function ensureAlertCardsWrapper() {
+  try {
+    // Helper: find elements by visible text when classes vary
+    const findByText = (txt) => Array.from(document.querySelectorAll('body *')).find(el => el && el.textContent && el.textContent.trim().includes(txt));
+
+    // Locate the RTW summary node more robustly — search for visible string 'RTW Summary'
+    const rtwNode = findByText('RTW Summary') || document.querySelector('.p-3.mb-3.rounded.border') || document.querySelector('.rtw-summary');
+
+    // Locate NMC element (common selectors and content)
+    const nmcNode = document.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50') ||
+                    document.querySelector('.nmc-summary') ||
+                    findByText('NMC Pins') ||
+                    findByText('pins expiring');
+
+    if (!rtwNode && !nmcNode) return; // nothing to do
+
+    // If both nodes exist and are already inside a shared wrapper with our class, ensure classes present and exit
+    const existingWrapper = (rtwNode && rtwNode.closest && rtwNode.closest('.alert-cards-wrapper')) || (nmcNode && nmcNode.closest && nmcNode.closest('.alert-cards-wrapper'));
+    if (existingWrapper) {
+      try { if (rtwNode) rtwNode.classList.add('alert-card'); } catch(e) {}
+      try { if (nmcNode) nmcNode.classList.add('alert-card'); } catch(e) {}
+      return;
+    }
+
+    // Create wrapper and place it before the earliest of the two nodes
+    const anchor = rtwNode || nmcNode;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'alert-cards-wrapper';
+
+    // Insert wrapper into DOM
+    anchor.parentNode.insertBefore(wrapper, anchor);
+
+    // Move rtwNode and nmcNode into wrapper in that order (if present)
+    if (rtwNode && rtwNode.parentNode !== wrapper) wrapper.appendChild(rtwNode);
+    if (nmcNode && nmcNode.parentNode !== wrapper) wrapper.appendChild(nmcNode);
+
+    // Apply alert-card class so inner layout/pills use shared CSS
+    if (rtwNode) {
+      rtwNode.classList.add('alert-card');
+      // ensure inner count pill uses alert-pill if present
+      const pill = rtwNode.querySelector('.alert-pill');
+      if (pill) pill.classList.add('alert-pill');
+    }
+    if (nmcNode) {
+      nmcNode.classList.add('alert-card');
+      // try to find numeric count and wrap/ensure pill class
+      let foundPill = nmcNode.querySelector('.alert-pill');
+      if (!foundPill) {
+        const countMatch = (nmcNode.textContent || '').match(/(\d{1,4})/);
+        if (countMatch) {
+          // Create pill element and insert it near the start of the node's left area
+          const pillEl = document.createElement('div');
+          pillEl.className = 'alert-pill';
+          pillEl.textContent = countMatch[1];
+          // find sensible insertion point
+          const left = nmcNode.querySelector('div') || nmcNode.firstElementChild || nmcNode;
+          left.insertBefore(pillEl, left.firstChild);
+        }
+      } else {
+        foundPill.classList.add('alert-pill');
+      }
+    }
+  } catch (e) {
+    // safe no-op - if this fails, it won't break the rest of the page
+    console.warn('ensureAlertCardsWrapper failed', e);
+  }
+})();
+
     // keep `summary` element available; it will be placed into the unified alert bar below
     // wire ignored button immediately so users don't need to click 'Show list' first
         const ignoredBtnImmediate = resultsEl.querySelector('#alerts-show-ignored');

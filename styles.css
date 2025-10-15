@@ -302,6 +302,7 @@ td[title="RTW status"] { white-space: nowrap; }
 /* Make interactive elements have a clear visible focus state */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--opal-1); }
 
+/* Compact alert cards used by RTW summary and NMC Pins (add near the modal/alert helpers) */
 .alert-cards-wrapper {
   display: flex;
   gap: 10px;
@@ -328,10 +329,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .alert-card .card-left {
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:flex-start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
   min-width: 160px;
 }
 
@@ -349,10 +350,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .alert-tile {
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  align-items:flex-start;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
   padding: 4px 8px;
   border-radius: 6px;
   min-width: 90px;
@@ -362,16 +363,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   width: 34px;
   height: 34px;
   border-radius: 999px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #fff;
   border: 1px solid rgba(0,0,0,0.06);
-  font-weight:700;
+  font-weight: 700;
   font-size: 14px;
 }
 
-.alert-actions { display:flex; gap:8px; align-items:center; margin-left:auto; }
+.alert-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
 
 /* Theme swatches in Settings modal */
 .theme-swatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
