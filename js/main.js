@@ -1869,38 +1869,76 @@ function computeRTWStats(files, rows) {
                 }
 
                 // helper: find all rows for a staff id across parsed files
+                // Improved findRowsForStaff: exact -> numeric-only -> relaxed field-scan fallback
                 function findRowsForStaff(staffId) {
                     const out = [];
                     try {
                         const files = (typeof getParsedFiles === 'function') ? getParsedFiles() : (window.__getParsedFiles ? window.__getParsedFiles() : []);
                         const wanted = String(staffId || '').trim();
+                        if (!wanted) return out;
                         const wantedDigits = wanted.replace(/\D/g, '');
                         const sampleKeys = [];
+
+                        // First pass: prefer exact or numeric-only matches
                         files.forEach(f => {
                             (f.dataRows || []).forEach((r, idx) => {
-                                // try any available precomputed key, then the tolerant extractor
-                                const rawKey = String((r && r.__staffKey) || getStaffKey(r) || '').trim();
-                                const rawDigits = rawKey.replace(/\D/g, '');
-                                // collect sample keys for diagnostics (limit)
-                                if (sampleKeys.length < 12) sampleKeys.push(rawKey || String(getStaffKey(r) || ''));
-                                // matches: exact string, or numeric-only match when formatting differs (e.g. '27029932-2' vs '27029932')
-                                if (rawKey && (rawKey === wanted || (rawDigits && wantedDigits && rawDigits === wantedDigits))) {
-                                    out.push({ file: f, row: r, rowIndex: idx });
-                                    return; // continue to next row
-                                }
-                                // also accept when the extractor on-the-fly matches the wanted value
-                                const alt = String(getStaffKey(r) || '').trim();
-                                const altDigits = alt.replace(/\D/g, '');
-                                if (alt && (alt === wanted || (altDigits && wantedDigits && altDigits === wantedDigits))) {
-                                    out.push({ file: f, row: r, rowIndex: idx });
-                                }
+                                try {
+                                    const rawKey = String((r && r.__staffKey) || getStaffKey(r) || '').trim();
+                                    const rawDigits = rawKey.replace(/\D/g, '');
+                                    if (sampleKeys.length < 12) sampleKeys.push(rawKey || String(getStaffKey(r) || ''));
+                                    if (rawKey && (rawKey === wanted || (rawDigits && wantedDigits && rawDigits === wantedDigits))) {
+                                        out.push({ file: f, row: r, rowIndex: idx });
+                                        return; // continue to next row
+                                    }
+                                    // also accept when the extractor on-the-fly matches the wanted value
+                                    const alt = String(getStaffKey(r) || '').trim();
+                                    const altDigits = alt.replace(/\D/g, '');
+                                    if (alt && (alt === wanted || (altDigits && wantedDigits && altDigits === wantedDigits))) {
+                                        out.push({ file: f, row: r, rowIndex: idx });
+                                        return;
+                                    }
+                                } catch (e) { /* ignore per-row errors */ }
                             });
                         });
-                        // If no rows found, log diagnostics to help trace mismatch reasons
+
+                        if (out.length) return out;
+
+                        // Second pass: relaxed scan across all cell values (substring or digits match)
+                        files.forEach(f => {
+                            (f.dataRows || []).forEach((r, idx) => {
+                                try {
+                                    // build a string containing relevant cell text
+                                    const rowText = Object.keys(r || {}).map(k => {
+                                        try {
+                                            const v = r[k];
+                                            if (v == null) return '';
+                                            if (typeof v === 'string') return v;
+                                            if (typeof v === 'number') return String(v);
+                                            try { return JSON.stringify(v); } catch (e) { return String(v); }
+                                        } catch (e) { return ''; }
+                                    }).join(' | ').toLowerCase();
+
+                                    // direct substring match
+                                    if (wanted && String(rowText).includes(String(wanted).toLowerCase())) {
+                                        out.push({ file: f, row: r, rowIndex: idx });
+                                        return;
+                                    }
+
+                                    // digits-only containment: e.g. cell "ID:27029932-2" should match "27029932"
+                                    if (wantedDigits) {
+                                        const rowDigits = String(rowText).replace(/\D/g, '');
+                                        if (rowDigits && rowDigits.indexOf(wantedDigits) !== -1) {
+                                            out.push({ file: f, row: r, rowIndex: idx });
+                                            return;
+                                        }
+                                    }
+                                } catch (e) { /* ignore per-row errors */ }
+                            });
+                        });
+
+                        // If still empty, log diagnostics once to help debugging
                         if (!out.length) {
-                            try {
-                                console.debug('findRowsForStaff: no match', { staffId: staffId, wantedDigits, filesScanned: (files||[]).length, sampleKeys });
-                            } catch (e) { /* ignore */ }
+                            try { console.debug('findRowsForStaff: no match', { staffId, wantedDigits, filesScanned: (files||[]).length, sampleKeys }); } catch (e) {}
                         }
                     } catch (e) { /* ignore */ }
                     return out;
