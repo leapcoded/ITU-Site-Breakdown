@@ -1757,32 +1757,45 @@ function computeRTWStats(files, rows) {
     const urgentCount = noRtw.length;
 
     summary.innerHTML = `
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <!-- Main card: title + brief metrics -->
-        <div style="display:flex;flex-direction:column;gap:6px;padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:220px;box-sizing:border-box">
+    <div role="region" aria-label="RTW summary" style="display:flex;gap:10px;align-items:center;flex-wrap:nowrap;min-width:420px">
+        <!-- Left card: Title + two metric tiles -->
+        <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:var(--color-surface);min-width:300px;box-sizing:border-box;height:64px">
+        <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:160px">
+            <div style="display:flex;align-items:center;gap:8px;">
+            <div aria-hidden="true" style="width:10px;height:10px;border-radius:999px;background:${statusColor || '#f59e0b'}"></div>
+            <div style="font-size:13px;font-weight:600;line-height:1;color:var(--color-text)">${escapeHtml('RTW Summary')}</div>
+            <div style="margin-left:6px;font-size:11px;color:var(--color-text-muted)">${escapeHtml(String(statusLabel))}</div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px">
+            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;background:transparent;min-width:90px">
+                <div style="font-weight:700;font-size:14px;color:var(--color-text)">${hadShift.length}</div>
+                <div style="font-size:11px;color:var(--color-text-muted)">had a shift</div>
+            </div>
+            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:4px 8px;border-radius:6px;background:transparent;min-width:120px">
+                <div style="display:flex;align-items:center;gap:8px">
+                <div style="font-weight:700;font-size:14px;color:var(--color-text)">${completed}</div>
+                <div style="font-size:12px;color:var(--color-text-muted)">RTW</div>
+                <div style="margin-left:6px;font-size:11px;padding:2px 6px;border-radius:999px;background:rgba(0,0,0,0.06);color:var(--color-text);font-weight:600">${completedPct}%</div>
+                </div>
+                <!-- subtle inline progress bar -->
+                <div style="margin-top:6px;width:100%;height:6px;background:rgba(0,0,0,0.06);border-radius:6px;overflow:hidden">
+                <div style="width:${Math.max(0, Math.min(100, Number(completedPct) || 0))}%;height:100%;background:${(completedPct >= 85) ? '#16a34a' : (completedPct >= 65) ? '#f59e0b' : '#ef4444'};border-radius:6px"></div>
+                </div>
+            </div>
+            </div>
+        </div>
+        </div>
+
+        <!-- Right card: Missing RTW -->
+        <div style="display:flex;flex-direction:column;justify-content:center;align-items:center;padding:8px 12px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box;height:64px">
+        <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px">Missing RTW</div>
         <div style="display:flex;align-items:center;gap:8px">
-            <div style="width:10px;height:10px;border-radius:999px;background:${statusColor || '#f59e0b'}"></div>
-            <div style="font-size:13px;font-weight:600;line-height:1">${escapeHtml('RTW Summary')} <span style="font-weight:500;font-size:11px;color:var(--color-text-muted)">(${escapeHtml(String(statusLabel))})</span></div>
-        </div>
-        <div style="display:flex;gap:12px;align-items:center;font-size:13px;color:var(--color-text);">
-            <div style="display:flex;flex-direction:column;align-items:flex-start">
-            <div style="font-weight:700;font-size:14px">${hadShift.length}</div>
-            <div style="font-size:11px;color:var(--color-text-muted)">had a shift</div>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-start">
-            <div style="font-weight:700;font-size:14px">${completed} <span style="font-weight:600;font-size:12px;color:var(--color-text-muted)">(${completedPct}%)</span></div>
-            <div style="font-size:11px;color:var(--color-text-muted)">RTW recorded</div>
-            </div>
+            <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b91c1c">${urgentCount}</div>
+            <div style="font-size:12px;color:var(--color-text-muted)">out of <strong>${hadShift.length}</strong></div>
         </div>
         </div>
 
-        <!-- Missing RTW card -->
-        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px 10px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fff7f7;min-width:120px;box-sizing:border-box">
-        <div style="font-size:11px;color:var(--color-text-muted)">Missing RTW</div>
-        <div style="font-weight:700;color:#b91c1c;font-size:14px">${urgentCount}</div>
-        </div>
-
-        <!-- Actions: compact Show list button aligned to the right -->
+        <!-- Actions -->
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <button id="alerts-show-no-rtw" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Show list</button>
         </div>
