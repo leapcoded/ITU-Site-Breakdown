@@ -1936,10 +1936,27 @@ function computeRTWStats(files, rows) {
                         };
 
                         // Name
-                        const forename = getVal('Forename') || getVal('First Name') || getVal('Given Name') || '';
-                        const surname = getVal('Surname') || getVal('Last Name') || '';
-                        const fullName = ((forename || surname) ? ((forename + ' ' + surname).trim()) : (getVal('Name')||getVal('Full Name')||''));
-                        addRow('Name', fullName || 'Unknown');
+                        let forename = getVal('Forename') || getVal('First Name') || getVal('Given Name') || '';
+                        let surname = getVal('Surname') || getVal('Last Name') || '';
+
+                        // Normalize to trimmed strings
+                        forename = forename ? String(forename).trim() : '';
+                        surname = surname ? String(surname).trim() : '';
+
+                        let fullName = '';
+                        if (forename && surname) {
+                            // Avoid duplicating identical values (e.g. when both fields contain the same value)
+                            if (forename === surname) fullName = forename;
+                            else fullName = `${forename} ${surname}`;
+                        } else if (forename) {
+                            fullName = forename;
+                        } else if (surname) {
+                            fullName = surname;
+                        } else {
+                            fullName = getVal('Name') || getVal('Full Name') || '';
+                        }
+
+                        addRow('Name', (fullName && String(fullName).trim()) ? fullName : 'Unknown');
 
                         // Staff number / assignment
                         const staffNo = getVal('Staff Number') || getVal('Assignment No') || getVal('Assignment No.') || getVal('AssignmentNo') || '';
