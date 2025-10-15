@@ -477,27 +477,57 @@ function renderCategoryUI() {
             tabBuilder.classList.remove('text-muted');
             tabAlerts.classList.remove('bg-white');
             tabAlerts.classList.add('text-muted');
-            renderReportBuilder();
+            // Defer heavy rendering to idle time for faster click response
+            const doRender = () => { try { renderReportBuilder(); } catch (e) { console.error('renderReportBuilder failed', e); } };
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(doRender, { timeout: 300 }); else setTimeout(doRender, 20);
         } else {
             tabAlerts.classList.add('bg-white');
             tabAlerts.classList.remove('text-muted');
             tabBuilder.classList.remove('bg-white');
             tabBuilder.classList.add('text-muted');
-            renderAlerts();
+            const doRender = () => { try { renderAlerts(); } catch (e) { console.error('renderAlerts failed', e); } };
+            if (typeof requestIdleCallback === 'function') requestIdleCallback(doRender, { timeout: 300 }); else setTimeout(doRender, 20);
         }
     }
 
     tabBuilder.addEventListener('click', () => setActiveTab('builder'));
     tabAlerts.addEventListener('click', () => setActiveTab('alerts'));
 
-    // default to Report Builder
-    setActiveTab('builder');
+    // default to Report Builder — render synchronously on initial load so the page is ready
+    tabBuilder.classList.add('bg-white'); tabBuilder.classList.remove('text-muted'); tabAlerts.classList.remove('bg-white'); tabAlerts.classList.add('text-muted');
+    try { renderReportBuilder(); } catch (e) { console.error('initial renderReportBuilder failed', e); }
+}
+
+// Build an in-memory index mapping numeric staff keys -> array of { file, rowIndex, row }
+function buildStaffIndex() {
+    try {
+        const files = (typeof getParsedFiles === 'function') ? getParsedFiles() : (typeof window !== 'undefined' && window.__getParsedFiles ? window.__getParsedFiles() : []);
+        const idx = {};
+        (files || []).forEach(f => {
+            (f.dataRows || []).forEach((r, i) => {
+                try {
+                    const k = String(getStaffKey(r) || '').replace(/\D/g, '');
+                    if (!k) return;
+                    idx[k] = idx[k] || [];
+                    idx[k].push({ file: f, rowIndex: i, row: r });
+                } catch (e) { /* ignore per-row */ }
+            });
+        });
+        try { if (typeof window !== 'undefined') { window.__staffIndex = idx; window.rebuildStaffIndex = buildStaffIndex; } } catch (e) {}
+        return idx;
+    } catch (e) { console.error('buildStaffIndex failed', e); return {}; }
 }
 
 // Render the existing report-builder UI into the tab content (keeps previous behaviour)
 function renderReportBuilder() {
     const tabContent = document.getElementById('tab-content');
     if (!tabContent) return;
+
+    // Defensive: clear any lingering active modal backdrops that could block UI clicks
+    try {
+        const stuck = Array.from(document.querySelectorAll('.modal-backdrop.active'));
+        stuck.forEach(s => { try { s.classList.remove('active'); } catch (e) {} });
+    } catch (e) { /* ignore */ }
     tabContent.innerHTML = `<div id="step1"><div id="categories-container" class="space-y-6"></div><div class="text-center mt-6 pt-6 border-t border-base space-x-4"><button id="add-category-btn" class="btn-secondary px-5 py-2.5 rounded-lg font-semibold">+ Add Category</button><button id="proceed-btn" class="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold text-lg hover:bg-blue-700 transition-all shadow-md disabled:bg-slate-300 disabled:cursor-not-allowed" disabled>Customize Report</button></div><div id="error-message" class="hidden mt-4 text-center text-red-600 bg-red-100 p-3 rounded-lg"></div></div>`;
     const addBtn = document.getElementById('add-category-btn');
     addBtn.addEventListener('click', () => {
@@ -536,6 +566,28 @@ function renderAlerts() {
     try { selectedFileIds = loadAlertsSelectedFiles(); } catch(e){ selectedFileIds = new Set(); }
     // initialize rules from DB-loaded global (set during init)
     let rules = (window.__ALERT_RULES && Array.isArray(window.__ALERT_RULES)) ? window.__ALERT_RULES.map(r => ({ ...r })) : [];
+
+    // If no rules are present, show a lightweight hint and render a lightweight rules editor.
+    // Avoid scanning files/headers synchronously here — schedule the heavy scan slightly later.
+    if (!rules || rules.length === 0) {
+        try {
+            const resultsEl = tabContent.querySelector('#alerts-results');
+            if (resultsEl) {
+                resultsEl.innerHTML = '';
+                const hint = document.createElement('div');
+                hint.className = 'p-4 rounded border bg-white text-sm';
+                hint.innerHTML = `<div class="text-lg font-semibold mb-2">No rules defined</div><div class="text-sm">Add one or more rules to see matched results. The file browser, RTW summary and NMC pins are available while you configure rules.</div>`;
+                resultsEl.appendChild(hint);
+            }
+        } catch (e) { /* ignore render hint errors */ }
+        // Render rules editor light-weight (no files/headers) then schedule a deferred real render
+        try { renderRulesEditor([], []); } catch (e) { /* ignore */ }
+        try {
+            setTimeout(() => {
+                try { renderRulesEditor(getParsedFiles(), unionHeaders(getParsedFiles())); } catch (e) { /* ignore */ }
+            }, 250);
+        } catch (e) { /* ignore */ }
+    }
 
     async function saveAllRules() {
         try {
@@ -599,8 +651,62 @@ function renderAlerts() {
                 return row[key];
             }
         }
+        // Fallback: try tolerant matching against row keys (case-insensitive, punctuation-insensitive, singular/plural)
+        try {
+            const normalize = (s) => (String(s || '')).toLowerCase().replace(/[^a-z0-9]/g, '').replace(/s$/,'');
+            const want = normalize(canonical);
+            for (const rk of Object.keys(row)) {
+                try {
+                    const cand = normalize(rk);
+                    if (!cand) continue;
+                    if (cand === want) {
+                        if (debug) console.debug('getValueByCanonical: tolerant match', rk, 'for', canonical);
+                        return row[rk];
+                    }
+                    // allow partial matches for common pairs like 'forename' ~ 'forenames' or 'dutydate' ~ 'duty'
+                    if (cand.includes(want) || want.includes(cand)) {
+                        if (debug) console.debug('getValueByCanonical: partial tolerant match', rk, 'for', canonical);
+                        return row[rk];
+                    }
+                } catch (e) { /* ignore key-specific errors */ }
+            }
+        } catch (e) { if (debug) console.debug('getValueByCanonical: tolerant fallback failed', e); }
         if (debug) console.debug('getValueByCanonical: no value found for', canonical);
         return undefined;
+    }
+
+    // Robust extraction of a staff identifier from a row using common header names
+    function getStaffKey(row) {
+        if (!row) return '';
+        const candidates = ['Staff Number','Staff No','Employee Number','Employee No','Assignment No','Assignment No.','Staff','StaffID','ID','EmployeeID'];
+        const normalize = (val) => {
+            if (val == null) return '';
+            let s = String(val || '').trim();
+            // If the assignment includes a hyphen suffix (e.g. 27029932-2), keep only the part before the hyphen
+            if (s.includes('-')) s = s.split('-')[0];
+            // Keep digits only (staff numbers are numeric). This removes spaces and other punctuation.
+            s = s.replace(/\D+/g, '');
+            return s;
+        };
+        for (const c of candidates) {
+            try {
+                const v = getValueByCanonical(row, c);
+                const n = normalize(v);
+                if (n) return n;
+            } catch (e) { /* ignore per-field errors */ }
+        }
+        // fallback: look for any key that contains 'staff' or 'assign' and return its value
+        try {
+            for (const k of Object.keys(row)) {
+                const nk = String(k || '').toLowerCase();
+                if (nk.includes('staff') || nk.includes('assign') || nk.includes('employee')) {
+                    const v = row[k];
+                    const n = normalize(v);
+                    if (n) return n;
+                }
+            }
+        } catch (e) { /* ignore */ }
+        return '';
     }
 
     // Helper to parse a date-like value into a Date object, trying various formats and locales.
@@ -662,7 +768,7 @@ function renderAlerts() {
             const nameCols = ['Name','Full Name','FullName','Display Name','DisplayName'];
             for (const f of files) {
                 for (const r of (f.dataRows || [])) {
-                    const key = String(getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff') || '').trim();
+                    const key = String(getStaffKey(r) || '').trim();
                     if (!key) continue;
                     if (key === String(staffId)) {
                         let first = null; let last = null;
@@ -689,7 +795,7 @@ function renderAlerts() {
             let anyFirst = null, anyLast = null;
             for (const f of files) {
                 for (const r of (f.dataRows || [])) {
-                    const key = String(getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff') || '').trim();
+                    const key = String(getStaffKey(r) || '').trim();
                     if (!key) continue; if (key !== String(staffId)) continue;
                     if (!anyFirst) {
                         for (const fc of firstCols) {
@@ -958,7 +1064,12 @@ function renderAlerts() {
                     } catch (e) { if (debug) console.debug('buildResults: diagnostics collection failed', e); }
 
                     if (evaluateRowAgainstRules(r, f, rules)) {
-                        rows.push({ __fileName: f.name, __fileId: f.id, __locale: f._locale || 'uk', data: r });
+                        const computedStaffKey = getStaffKey(r);
+                        // store canonical staff key on the raw row so callers/indexers can reuse it without recomputing
+                        try { if (computedStaffKey) r.__staffKey = String(computedStaffKey); } catch (e) {}
+                        // ...existing code...
+                        const wrapper = { __fileName: f.name, __fileId: f.id, __locale: f._locale || 'uk', data: r, __staffKey: computedStaffKey };
+                        rows.push(wrapper);
                     }
                 } catch (e) { if (debug) console.debug('buildResults: evaluateRowAgainstRules error', e, { file: f.name, row: r }); }
             });
@@ -978,11 +1089,11 @@ function renderAlerts() {
             const today = new Date(); today.setHours(0,0,0,0);
             // scan all selected files to collect upcoming duty dates and last duties
             files.forEach(f => {
-                (f.dataRows || []).forEach(r => {
+        (f.dataRows || []).forEach(r => {
                     try {
-                        const staffVal = getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No');
+            const staffVal = getStaffKey(r);
                         if (!staffVal) return;
-                                const dutyRaw = getValueByCanonical(r, 'Duty Date') || getValueByCanonical(r, 'Next Duty');
+                const dutyRaw = getValueByCanonical(r, 'Duty Date') || getValueByCanonical(r, 'Next Duty');
                                 if (!dutyRaw) return;
                                 // Require Shift Type and accept only Day or Night (ignore Rest/Combined)
                                 const dutyTypeVal = getValueByCanonical(r, 'Shift Type');
@@ -1062,7 +1173,42 @@ function renderAlerts() {
         } catch (e) { if (window.__ALERTS_DEBUG) console.debug('dutyMap: failed', e); }
 
                 diagnostics.ignoredDuties = ignoredDuties;
-                return { headers, rows, diagnostics, nextDutyMap, lastDutyMap, nextDutyDetailMap, lastDutyDetailMap };
+                // compute per-staff RTW summary for quick lookup in the UI
+                let perStaffArr = [];
+                try { perStaffArr = computeRTWStats(getParsedFiles(), null) || []; } catch (e) { try { perStaffArr = (typeof window !== 'undefined' && typeof window.computeRTWLibraryStats === 'function') ? window.computeRTWLibraryStats() : []; } catch (e2) { perStaffArr = []; } }
+                const perStaffMap = {};
+                perStaffArr.forEach(p => { try { if (p && p.staff) perStaffMap[String(p.staff)] = p; } catch (e) {} });
+                // Annotate each result row with RTW flags for fast lookup during render and details display
+                try {
+                    rows.forEach(wrap => {
+                        try {
+                            const rk = String(wrap.__staffKey || (wrap.data && wrap.data.__staffKey) || '').trim();
+                            if (!rk) return;
+                            let staffObj = perStaffMap[rk] || null;
+                            if (!staffObj) {
+                                // try numeric-only match across perStaffMap keys
+                                const norm = rk.replace(/\D/g, '');
+                                if (norm) {
+                                    for (const k of Object.keys(perStaffMap || {})) {
+                                        try {
+                                            if (String(k).replace(/\D/g, '') === norm) { staffObj = perStaffMap[k]; break; }
+                                        } catch (e) { /* ignore */ }
+                                    }
+                                }
+                            }
+                            if (staffObj) {
+                                wrap.__rtwFlags = {
+                                    rtwDone: !!staffObj.rtwDone,
+                                    hadShiftAfter: !!staffObj.hadShiftAfter,
+                                    continuingSickness: !!staffObj.continuingSickness
+                                };
+                                try { if (wrap.data) wrap.data.__rtwFlags = Object.assign({}, wrap.__rtwFlags); } catch (e) {}
+                            }
+                        } catch (e) { /* ignore per-row annotate errors */ }
+                    });
+                } catch (e) { /* ignore annotate failures */ }
+
+                return { headers, rows, diagnostics, nextDutyMap, lastDutyMap, nextDutyDetailMap, lastDutyDetailMap, perStaffMap };
     }
 
     // Scan selected files for NMC pin expiry rows and return summary
@@ -1078,7 +1224,7 @@ function renderAlerts() {
                         // permissive detection: require at least Surname and Valid To or Date Gained/Valid To
                         const surname = getValueByCanonical(r, 'Surname') || getValueByCanonical(r, 'Last Name') || getValueByCanonical(r, 'Family Name');
                         const forenames = getValueByCanonical(r, 'Forenames') || getValueByCanonical(r, 'Forename') || getValueByCanonical(r, 'First Name');
-                        const staffNo = getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Staff No') || getValueByCanonical(r, 'Employee Number');
+                        const staffNo = getStaffKey(r) || getValueByCanonical(r, 'Staff No') || getValueByCanonical(r, 'Employee Number');
                         const validToRaw = getValueByCanonical(r, 'Valid To') || getValueByCanonical(r, 'Expiry Date') || getValueByCanonical(r, 'ValidTo');
                         if (!surname || !validToRaw) return;
                         const dt = parseToDate(validToRaw, f._locale || 'uk');
@@ -1217,8 +1363,83 @@ function renderAlerts() {
             // no width inputs in this modal; column widths are controlled by drag handles in the table
             modal.classList.add('active');
         }
-        // build results
-    const res = buildResults();
+        // build results (robust): prefer buildResults when available.
+        // If no rules are defined, do NOT call buildResults (it treats empty rules as match-all)
+        // and instead synthesize a minimal result but keep per-staff RTW stats so summaries work.
+        let res = null;
+        try {
+            if (!rules || rules.length === 0) {
+                // synthesize minimal result when there are no rules: do not compute matched rows
+                try {
+                    // Use a cached per-staff map if available to avoid blocking work during initial render
+                    const cached = (typeof window !== 'undefined' && window.__RTW_PER_STAFF_CACHE) ? window.__RTW_PER_STAFF_CACHE : null;
+                    if (cached) {
+                        res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: cached };
+                    } else {
+                        // create an empty result quickly and schedule a background compute to populate perStaffMap
+                        res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: {} };
+                        const computeAndCache = () => {
+                            try {
+                                const perArr = (typeof computeRTWLibraryStats === 'function') ? computeRTWLibraryStats({ includeSources: true }) : [];
+                                const perMap = {};
+                                (perArr || []).forEach(p => { try { if (p && p.staff) perMap[String(p.staff)] = p; } catch (e) {} });
+                                try { window.__RTW_PER_STAFF_CACHE = perMap; } catch (e) {}
+                                // if the alerts tab is still visible, refresh the UI to show updated summaries
+                                try { const isAlertsVisible = document.querySelector('#tab-alerts') && document.getElementById('tab-alerts').classList.contains('bg-white'); if (isAlertsVisible) updateAlerts(); } catch (e) {}
+                            } catch (e) { if (window.__ALERTS_DEBUG) console.debug('background computeRTWLibraryStats failed', e); }
+                        };
+                        if (typeof requestIdleCallback === 'function') requestIdleCallback(computeAndCache, { timeout: 2000 }); else setTimeout(computeAndCache, 200);
+                    }
+                    if (window.__ALERTS_DEBUG) console.debug('updateAlerts: synthesized minimal res because no rules defined (fast path)');
+                } catch (e) {
+                    res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: {} };
+                }
+            } else {
+                if (typeof buildResults === 'function') res = buildResults();
+            }
+        } catch (e) {
+            if (window.__ALERTS_DEBUG) console.debug('buildResults call failed, will fallback to library scan', e);
+            res = null;
+        }
+        // If buildResults didn't produce a usable result, synthesize a minimal result using computeRTWLibraryStats
+        if (!res) {
+            try {
+                // Use cached per-staff map when available to avoid blocking
+                const cached = (typeof window !== 'undefined' && window.__RTW_PER_STAFF_CACHE) ? window.__RTW_PER_STAFF_CACHE : null;
+                if (cached) {
+                    res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: cached };
+                } else {
+                    // create a minimal empty result and schedule a deferred compute to populate the cache
+                    res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: {} };
+                    try {
+                        setTimeout(() => {
+                            try {
+                                const perArr = (typeof computeRTWLibraryStats === 'function') ? computeRTWLibraryStats({ includeSources: true }) : [];
+                                const perMap = {};
+                                (perArr || []).forEach(p => { try { if (p && p.staff) perMap[String(p.staff)] = p; } catch (e) {} });
+                                try { window.__RTW_PER_STAFF_CACHE = perMap; } catch (e) {}
+                                try { updateAlerts(); } catch (e) {}
+                            } catch (e) { if (window.__ALERTS_DEBUG) console.debug('deferred computeRTWLibraryStats failed', e); }
+                        }, 800);
+                    } catch (e) { /* ignore schedule failure */ }
+                }
+            } catch (e) {
+                // final fallback: empty result
+                res = { headers: [], rows: [], diagnostics: { ignoredDuties: [] }, nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, perStaffMap: {} };
+            }
+        } else {
+            // Ensure perStaffMap exists; attach fallback map when missing or empty
+            try {
+                const hasPer = res.perStaffMap && Object.keys(res.perStaffMap).length;
+                if (!hasPer) {
+                    const perArr = (typeof computeRTWLibraryStats === 'function') ? computeRTWLibraryStats({ includeSources: true }) : [];
+                    const perMap = {};
+                    (perArr || []).forEach(p => { try { if (p && p.staff) perMap[String(p.staff)] = p; } catch (e) {} });
+                    res.perStaffMap = perMap;
+                    if (window.__ALERTS_DEBUG) console.debug('attached fallback perStaffMap from computeRTWLibraryStats', Object.keys(perMap).length);
+                }
+            } catch (e) { /* ignore per-staff fallback errors */ }
+        }
         // Compute RTW stats: for each staff (Staff Number or Assignment No) check if they had any Duty Date after their Sickness End date
         function computeRTWStats(files, rows) {
             // candidate canonical names to lookup; users can map aliases with Manage column links
@@ -1226,7 +1447,7 @@ function renderAlerts() {
             const sicknessCols = ['Sickness End','Sickness End Date','Sick End Date','SicknessEnd','Sick End','Sickness_End','End','End Date'];
             const dutyCols = ['Duty Date','DutyDate','Duty','Shift Date','ShiftDate','Next Duty','NextDuty','Next Duty Date','NextDutyDate'];
             const rtwCols = ['Return to Work','RTW','Return to work','Return','ReturnToWork','Return To Work Interview Completed','Return To Work Interview','RTW Interview Completed','RTW Interview'];
-            const staffKeyFn = (r) => getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff');
+            const staffKeyFn = (r) => getStaffKey(r) || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff');
 
             const staffMap = {};
             // rows can be provided in two shapes:
@@ -1244,18 +1465,47 @@ function renderAlerts() {
             }
 
             // examine all feedRows
+            // We'll collect sickness as ranges (start/end) when available so we can detect continuing/merged sickness spells.
+            const sicknessStartCols = ['Sickness Start','Sickness Start Date','Sick Start','Start','Start Date','SicknessStart'];
             feedRows.forEach(r => {
                 const staff = String(staffKeyFn(r.data) || '').trim();
                 if (!staff) return;
-                staffMap[staff] = staffMap[staff] || { staff, sicknessDates: [], dutyDates: [], rtwFlags: [] };
+                staffMap[staff] = staffMap[staff] || { staff, sicknessRanges: [], dutyDates: [], rtwFlags: [] };
                 const entry = staffMap[staff];
-                // collect sickness date if present
+                // collect sickness start/end if present (prefer explicit start+end columns)
+                let startRaw = null, endRaw = null;
                 for (const sc of sicknessCols) {
                     const raw = getValueByCanonical(r.data, sc);
-                    if (raw != null) {
-                        const dt = parseToDate(raw, r.__locale || 'uk');
-                        if (dt) entry.sicknessDates.push(dt);
-                        break;
+                    if (raw != null) { endRaw = raw; break; }
+                }
+                for (const ss of sicknessStartCols) {
+                    const raw = getValueByCanonical(r.data, ss);
+                    if (raw != null) { startRaw = raw; break; }
+                }
+                // parse into dates (use parseToDate with row locale)
+                try {
+                    const startDt = startRaw != null ? parseToDate(startRaw, r.__locale || 'uk') : null;
+                    const endDt = endRaw != null ? parseToDate(endRaw, r.__locale || 'uk') : null;
+                    // capture reason text when available so we can opt to merge ranges only when reasons match
+                    const reasonCols = ['Reason','Sickness Reason','Absence Reason','Notes','Description'];
+                    let reasonVal = null;
+                    for (const rc of reasonCols) {
+                        const rv = getValueByCanonical(r.data, rc);
+                        if (rv != null && String(rv || '').trim() !== '') { reasonVal = String(rv).trim(); break; }
+                    }
+                    // If only end present, set start= end. If only start present, set end = start.
+                    if (endDt && !startDt) entry.sicknessRanges.push({ start: endDt, end: endDt, reason: reasonVal });
+                    else if (startDt && !endDt) entry.sicknessRanges.push({ start: startDt, end: startDt, reason: reasonVal });
+                    else if (startDt && endDt) entry.sicknessRanges.push({ start: startDt, end: endDt, reason: reasonVal });
+                } catch (e) {
+                    // fall back to previous behaviour: try to find a single sickness date value
+                    for (const sc of sicknessCols) {
+                        const raw = getValueByCanonical(r.data, sc);
+                        if (raw != null) {
+                            const dt = parseToDate(raw, r.__locale || 'uk');
+                            if (dt) entry.sicknessRanges.push({ start: dt, end: dt });
+                            break;
+                        }
                     }
                 }
                 // collect duty date(s) with priority info — but skip Rest rows so they don't count as duties
@@ -1323,12 +1573,36 @@ function renderAlerts() {
                 }
             });
 
-            // Evaluate per-staff
+                // Evaluate per-staff
             const results = [];
             const today = new Date(); today.setHours(0,0,0,0);
             Object.values(staffMap).forEach(s => {
-                // pick latest sickness end if multiple
-                const sickness = s.sicknessDates.length ? new Date(Math.max(...s.sicknessDates.map(d=>d.getTime()))) : null;
+                // merge sicknessRanges into non-overlapping, adjacent-merged ranges
+                // allow user to require same reason to merge via localStorage flag
+                const requireReasonMatch = (typeof localStorage !== 'undefined' && localStorage.getItem('TERRA_MERGE_SICKNESS_BY_REASON') === 'true');
+                const rawRanges = (s.sicknessRanges || []).filter(rr => rr && rr.start && rr.end).map(rr => ({ start: new Date(rr.start.getFullYear(), rr.start.getMonth(), rr.start.getDate()), end: new Date(rr.end.getFullYear(), rr.end.getMonth(), rr.end.getDate()), reason: (rr.reason != null ? String(rr.reason).trim() : null) }));
+                rawRanges.sort((a,b) => a.start.getTime() - b.start.getTime());
+                const merged = [];
+                for (const r0 of rawRanges) {
+                    if (!merged.length) { merged.push({ start: new Date(r0.start), end: new Date(r0.end), count:1 }); continue; }
+                    const last = merged[merged.length - 1];
+                    // consider adjacent if r0.start <= last.end + 1 day
+                    const nextDayAfterLast = new Date(last.end.getTime()); nextDayAfterLast.setDate(nextDayAfterLast.getDate() + 1);
+                    // Only merge if reasons match (both null/empty or identical)
+                    const lastReason = last.reason != null ? String(last.reason).trim() : null;
+                    const thisReason = r0.reason != null ? String(r0.reason).trim() : null;
+                    // Merge when adjacent and either reasons match OR the user has not required reason matching
+                    if (r0.start.getTime() <= nextDayAfterLast.getTime() && (!requireReasonMatch || lastReason === thisReason)) {
+                        // merge
+                        if (r0.end.getTime() > last.end.getTime()) last.end = new Date(r0.end);
+                        last.count = (last.count || 1) + 1;
+                    } else {
+                        merged.push({ start: new Date(r0.start), end: new Date(r0.end), count: 1, reason: r0.reason || null });
+                    }
+                }
+                // pick latest sickness end if multiple merged ranges
+                const latestRange = merged.length ? merged[merged.length - 1] : null;
+                const sickness = latestRange ? new Date(latestRange.end.getTime()) : null;
                 // determine RTW done flag: if any flag looks like yes
                 const rtwDone = s.rtwFlags.some(f => { const v = String(f || '').toLowerCase(); return v === 'y' || v === 'yes' || v === 'true' || v === '1'; });
                 // process dutyDates (which may include objects with prio) - prefer higher priority when same iso
@@ -1358,7 +1632,23 @@ function renderAlerts() {
                 const hadShiftAfter = sickness && lastDuty && lastDuty.getTime() >= sickness.getTime();
                 // sampleDuty: earliest duty (if any)
                 const sampleDuty = processedDuties.length ? processedDuties[0] : null;
-                results.push({ staff: s.staff, sickness, hadShiftAfter: !!hadShiftAfter, rtwDone: !!rtwDone, sampleDuty, nextDuty, lastDuty });
+                // Explicit RTW semantics (new fields) while keeping legacy names for backward compatibility:
+                // - sicknessEnded: whether the latest sickness end date is on-or-before today
+                // - hadShiftAfterSickness: whether they had a duty on-or-after the sickness end
+                // - rtwInterviewDone: whether an RTW flag was recorded
+                const sicknessEnded = !!(sickness && sickness.getTime() <= today.getTime());
+                const hadShiftAfterSickness = !!hadShiftAfter;
+                const rtwInterviewDone = !!rtwDone;
+                // continuingSickness: true when latest merged range ends in the future (ongoing)
+                // OR when multiple original ranges merged into a single continuous block.
+                // As a pragmatic fallback, also flag continuing when there are multiple raw ranges
+                // (source rows) even if they didn't merge — this helps surface continuing sickness
+                // when Reason text prevented merging but the staff clearly has multiple sickness entries.
+                const rawMultiple = Array.isArray(rawRanges) && rawRanges.length > 1;
+                const continuingSickness = !!(latestRange && (latestRange.end.getTime() >= today.getTime() || (latestRange.count && latestRange.count > 1))) || rawMultiple;
+                // normalized merged ranges for output (ISO strings)
+                const mergedRangesOut = merged.map(mr => ({ start: toLocalIso(mr.start), end: toLocalIso(mr.end), parts: mr.count || 1, reason: (mr.reason != null ? String(mr.reason) : null) }));
+                results.push({ staff: s.staff, sickness, sicknessEnded, hadShiftAfterSickness, hadShiftAfter: !!hadShiftAfter, rtwInterviewDone, rtwDone: !!rtwDone, sampleDuty, nextDuty, lastDuty, continuingSickness, sicknessRanges: mergedRangesOut });
             });
             return results;
         }
@@ -1376,6 +1666,25 @@ function renderAlerts() {
     // include 'Source File' in the available headers so user can hide it
     const visibleHeaders = getVisibleColumns(['Source File', ...res.headers]);
     const cols = [...visibleHeaders, 'Last Duty', 'Next Duty'];
+    // Helper to compute RTW flags for a row (lazy)
+    function computeRowRTWFlags(row) {
+        const staffKey = String(row.__staffKey || (row.data && row.data.__staffKey) || '').trim();
+        let staffObj = res && res.perStaffMap && staffKey ? res.perStaffMap[staffKey] : null;
+        if (!staffObj && staffKey && res && res.perStaffMap) {
+            // try numeric-only match
+            const norm = staffKey.replace(/\D/g, '');
+            if (norm) {
+                for (const k of Object.keys(res.perStaffMap)) {
+                    if (String(k).replace(/\D/g, '') === norm) { staffObj = res.perStaffMap[k]; break; }
+                }
+            }
+        }
+        return {
+            rtwDone: !!(staffObj && staffObj.rtwDone),
+            hadShiftAfter: !!(staffObj && staffObj.hadShiftAfter),
+            continuingSickness: !!(staffObj && staffObj.continuingSickness)
+        };
+    }
         // render summary above the table
         resultsEl.innerHTML = '';
     // Determine status color by thresholds: >=85 green, 65-84 amber, <65 red
@@ -1493,7 +1802,7 @@ function renderAlerts() {
                         const files = getParsedFiles();
                         for (const f of files) {
                             for (const r of (f.dataRows || [])) {
-                                const key = String(getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff') || '').trim();
+                                const key = String(getStaffKey(r) || '').trim();
                                 if (!key) continue;
                                 if (key === String(staffId)) {
                                     // prefer first/given + surname/family
@@ -1528,56 +1837,147 @@ function renderAlerts() {
                 function findRowsForStaff(staffId) {
                     const out = [];
                     try {
-                        const files = getParsedFiles();
+                        const files = (typeof getParsedFiles === 'function') ? getParsedFiles() : (window.__getParsedFiles ? window.__getParsedFiles() : []);
+                        const wanted = String(staffId || '').trim();
+                        const wantedDigits = wanted.replace(/\D/g, '');
+                        const sampleKeys = [];
                         files.forEach(f => {
                             (f.dataRows || []).forEach((r, idx) => {
-                                const key = String(getValueByCanonical(r, 'Staff Number') || getValueByCanonical(r, 'Assignment No') || getValueByCanonical(r, 'Staff') || '').trim();
-                                if (key === String(staffId)) out.push({ file: f, row: r, rowIndex: idx });
+                                // try any available precomputed key, then the tolerant extractor
+                                const rawKey = String((r && r.__staffKey) || getStaffKey(r) || '').trim();
+                                const rawDigits = rawKey.replace(/\D/g, '');
+                                // collect sample keys for diagnostics (limit)
+                                if (sampleKeys.length < 12) sampleKeys.push(rawKey || String(getStaffKey(r) || ''));
+                                // matches: exact string, or numeric-only match when formatting differs (e.g. '27029932-2' vs '27029932')
+                                if (rawKey && (rawKey === wanted || (rawDigits && wantedDigits && rawDigits === wantedDigits))) {
+                                    out.push({ file: f, row: r, rowIndex: idx });
+                                    return; // continue to next row
+                                }
+                                // also accept when the extractor on-the-fly matches the wanted value
+                                const alt = String(getStaffKey(r) || '').trim();
+                                const altDigits = alt.replace(/\D/g, '');
+                                if (alt && (alt === wanted || (altDigits && wantedDigits && altDigits === wantedDigits))) {
+                                    out.push({ file: f, row: r, rowIndex: idx });
+                                }
                             });
                         });
+                        // If no rows found, log diagnostics to help trace mismatch reasons
+                        if (!out.length) {
+                            try {
+                                console.debug('findRowsForStaff: no match', { staffId: staffId, wantedDigits, filesScanned: (files||[]).length, sampleKeys });
+                            } catch (e) { /* ignore */ }
+                        }
                     } catch (e) { /* ignore */ }
                     return out;
                 }
 
+                // Render entries compactly for non-technical users
+                function renderStaffDetailsEntries(body, entries) {
+                    body.innerHTML = '';
+                    if (!entries || !entries.length) {
+                        body.textContent = 'No rows found for this staff in the library.';
+                        return;
+                    }
+                    entries.forEach(en => {
+                        const fileName = en.file && (en.file.name || en.file.id) ? (en.file.name || en.file.id) : 'unknown source';
+                        const container = document.createElement('div'); container.className = 'mb-3';
+                        const hdr = document.createElement('div'); hdr.className = 'flex items-center justify-between mb-1';
+                        const title = document.createElement('div'); title.className = 'font-semibold'; title.textContent = `${fileName} — row ${en.rowIndex}`;
+                        hdr.appendChild(title);
+                        container.appendChild(hdr);
+
+                        const grid = document.createElement('div'); grid.className = 'detail-grid';
+
+                        const getVal = (key) => {
+                            try { const v = (typeof getValueByCanonical === 'function') ? getValueByCanonical(en.row, key) : (en.row && en.row[key] !== undefined ? en.row[key] : undefined); return v == null ? '' : String(v); } catch (e) { return ''; }
+                        };
+
+                        const addRow = (label, val) => {
+                            if (val === null || val === undefined || String(val).toString().trim() === '') return;
+                            const row = document.createElement('div'); row.className = 'detail-row';
+                            const lab = document.createElement('div'); lab.className = 'detail-label text-subtle'; lab.textContent = label;
+                            const valEl = document.createElement('div'); valEl.className = 'detail-value'; valEl.innerHTML = `<strong>${escapeHtml(String(val))}</strong>`;
+                            row.appendChild(lab); row.appendChild(valEl); grid.appendChild(row);
+                        };
+
+                        // Name
+                        const forename = getVal('Forename') || getVal('First Name') || getVal('Given Name') || '';
+                        const surname = getVal('Surname') || getVal('Last Name') || '';
+                        const fullName = ((forename || surname) ? ((forename + ' ' + surname).trim()) : (getVal('Name')||getVal('Full Name')||''));
+                        addRow('Name', fullName || 'Unknown');
+
+                        // Staff number / assignment
+                        const staffNo = getVal('Staff Number') || getVal('Assignment No') || getVal('Assignment No.') || getVal('AssignmentNo') || '';
+                        addRow('Staff number', staffNo);
+
+                        // Duties
+                        const lastDuty = getVal('Last Duty') || getVal('Duty Date') || '';
+                        const nextDuty = getVal('Next Duty') || getVal('Next Duty Date') || getVal('NextDuty') || '';
+                        try { addRow('Last duty', lastDuty ? formatByLocale(lastDuty, en.row && en.row.__sourceLocale ? en.row.__sourceLocale : undefined) : ''); } catch (e) { addRow('Last duty', lastDuty); }
+                        try { addRow('Next duty', nextDuty ? formatByLocale(nextDuty, en.row && en.row.__sourceLocale ? en.row.__sourceLocale : undefined) : ''); } catch (e) { addRow('Next duty', nextDuty); }
+
+                        // Sickness / RTW
+                        const sickStart = getVal('Sickness Start') || getVal('Sickness') || '';
+                        const sickEnd = getVal('Sickness End') || getVal('SicknessEnd') || '';
+                        const rtw = getVal('Return to Work') || getVal('RTW') || '';
+                        const reason = getVal('Reason') || getVal('Sickness Reason') || '';
+                        try { if (sickStart) addRow('Sickness start', formatByLocale(sickStart, en.row && en.row.__sourceLocale ? en.row.__sourceLocale : undefined)); } catch(e){ if (sickStart) addRow('Sickness start', sickStart); }
+                        try { if (sickEnd) addRow('Sickness end', formatByLocale(sickEnd, en.row && en.row.__sourceLocale ? en.row.__sourceLocale : undefined)); } catch(e){ if (sickEnd) addRow('Sickness end', sickEnd); }
+                        addRow('RTW interview', rtw || 'Not recorded');
+                        if (reason) addRow('Reason', reason);
+
+                        // Minimal raw toggle (per entry)
+                        const rawToggle = document.createElement('a'); rawToggle.href = '#'; rawToggle.className = 'text-xs text-subtle'; rawToggle.style.display = 'inline-block'; rawToggle.style.marginTop = '6px'; rawToggle.textContent = 'Show raw details';
+                        const pre = document.createElement('pre'); pre.className = 'small-raw'; pre.style.display = 'none'; pre.textContent = JSON.stringify(en.row, null, 2);
+                        rawToggle.addEventListener('click', (ev) => { try { ev.preventDefault(); if (pre.style.display === 'none') { pre.style.display = 'block'; rawToggle.textContent = 'Hide raw details'; } else { pre.style.display = 'none'; rawToggle.textContent = 'Show raw details'; } } catch(e){} });
+
+                        container.appendChild(grid);
+                        container.appendChild(rawToggle);
+                        container.appendChild(pre);
+                        body.appendChild(container);
+                    });
+                }
+
                 function showStaffDetails(staffId) {
+                    console.debug('showStaffDetails called', { staffId });
                     const entries = findRowsForStaff(staffId);
+                    console.debug('showStaffDetails found entries count', { count: (entries && entries.length) || 0 });
                     const modalId = 'staff-detail-modal';
                     let md = document.getElementById(modalId);
                     if (!md) {
+                        console.debug('showStaffDetails creating modal element');
                         md = document.createElement('div'); md.id = modalId; md.className = 'modal-backdrop';
-                        md.innerHTML = `<div class="modal" style="max-width:900px"><div class="flex justify-between items-center mb-2"><h2 class="text-lg font-semibold">Staff details</h2><button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading">&times;</button></div><div class="modal-body p-2"><div id="staff-detail-body" class="text-sm"></div></div><div class="modal-footer mt-3 text-right"><button id="staff-detail-close" class="px-3 py-1 rounded">Close</button></div></div>`;
+                        md.innerHTML = `<div class="modal" style="max-width:900px"><div class="flex justify-between items-center mb-2"><h2 class="text-lg font-semibold">Staff details</h2><div class="modal-header-actions"><button id="staff-detail-toggle-raw" class="px-2 py-1 text-sm border rounded">Show raw data</button><button id="staff-detail-copy" class="px-2 py-1 text-sm border rounded">Copy raw</button></div><button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading">&times;</button></div><div class="modal-body p-2"><div id="staff-detail-body" class="text-sm"></div></div><div class="modal-footer mt-3 text-right"><button id="staff-detail-close" class="px-3 py-1 rounded">Close</button></div></div>`;
                         document.body.appendChild(md);
                         md.querySelector('.modal-close-btn').addEventListener('click', () => md.classList.remove('active'));
                         md.querySelector('#staff-detail-close').addEventListener('click', () => md.classList.remove('active'));
+                        // wire header controls
+                        try {
+                            const toggle = md.querySelector('#staff-detail-toggle-raw');
+                            const copyBtn = md.querySelector('#staff-detail-copy');
+                            if (toggle) toggle.addEventListener('click', (ev) => {
+                                try {
+                                    ev.preventDefault();
+                                    if (md.classList.contains('show-raw')) { md.classList.remove('show-raw'); toggle.textContent = 'Show raw data'; }
+                                    else { md.classList.add('show-raw'); toggle.textContent = 'Hide raw data'; }
+                                } catch (e) { /* ignore */ }
+                            });
+                            if (copyBtn) copyBtn.addEventListener('click', async (ev) => {
+                                try {
+                                    ev.preventDefault();
+                                    const bodyEl = md.querySelector('#staff-detail-body');
+                                    const pres = Array.from(bodyEl.querySelectorAll('pre')).map(p => p.textContent).join('\n\n----\n\n');
+                                    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(pres);
+                                    else { const ta = document.createElement('textarea'); ta.value = pres; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+                                } catch (e) { console.warn('copy raw failed', e); }
+                            });
+                        } catch (e) { /* ignore */ }
                     }
                     const body = md.querySelector('#staff-detail-body'); body.innerHTML = '';
-                    if (!entries.length) {
-                        body.textContent = 'No rows found for this staff in the library.';
-                    } else {
-                        entries.forEach(en => {
-                            const hdr = document.createElement('div'); hdr.className = 'p-2 border-b font-semibold'; hdr.textContent = `${en.file && en.file.name ? en.file.name : en.file.id || 'unknown'} — row ${en.rowIndex}`;
-                            body.appendChild(hdr);
-                            const tbl = document.createElement('table'); tbl.className = 'w-full text-sm mb-3 border';
-                            const thead = document.createElement('thead'); thead.innerHTML = '<tr><th class="px-2 py-1 border-r">Column</th><th class="px-2 py-1">Value</th></tr>';
-                            tbl.appendChild(thead);
-                            const tbody2 = document.createElement('tbody');
-                            // key columns to show
-                            const showCols = ['Forename','First Name','Given Name','Surname','Last Name','Staff Number','Assignment No','Sickness End','Return to Work','Duty Date','Next Duty'];
-                            showCols.forEach(cn => {
-                                const val = getValueByCanonical(en.row, cn) || (en.row[cn] !== undefined ? en.row[cn] : '');
-                                const tr = document.createElement('tr');
-                                tr.innerHTML = `<td class="px-2 py-1 border-r align-top text-xs text-subtle">${escapeHtml(cn)}</td><td class="px-2 py-1 text-xs">${escapeHtml(String(val || ''))}</td>`;
-                                tbody2.appendChild(tr);
-                            });
-                            // also include a JSON dump button
-                            const trExtra = document.createElement('tr');
-                            trExtra.innerHTML = `<td class="px-2 py-1 border-r align-top text-xs text-subtle">Raw Row</td><td class="px-2 py-1 text-xs"><pre style="white-space:pre-wrap">${escapeHtml(JSON.stringify(en.row, null, 2))}</pre></td>`;
-                            tbody2.appendChild(trExtra);
-                            tbl.appendChild(tbody2);
-                            body.appendChild(tbl);
-                        });
-                    }
+                    // Use compact renderer to display only relevant info per entry
+                    try { renderStaffDetailsEntries(body, entries); } catch (e) { body.textContent = 'No rows found for this staff in the library.'; }
                     md.classList.add('active');
+                    console.debug('showStaffDetails activated modal', { modalId, active: md.classList.contains('active') });
                 }
                     try { if (typeof window !== 'undefined') window.showStaffDetails = showStaffDetails; } catch (e) { /* ignore */ }
                 noRtw.forEach(s => {
@@ -1586,7 +1986,7 @@ function renderAlerts() {
                     const name = findStaffName(s.staff) || String(s.staff);
                     const left = document.createElement('div');
                     const link = document.createElement('a'); link.href = '#'; link.className = 'text-sm font-medium staff-link'; link.dataset.staff = String(s.staff); link.textContent = name;
-                    link.addEventListener('click', (ev) => { ev.preventDefault(); try { showStaffDetails(link.dataset.staff); } catch (e) { console.error('showStaffDetails failed', e); } });
+                    link.addEventListener('click', (ev) => { ev.preventDefault(); try { scheduleShowStaffDetails(link.dataset.staff); } catch (e) { console.error('scheduleShowStaffDetails failed', e); } });
                     left.appendChild(link);
                     const right = document.createElement('div'); right.className = 'text-sm text-subtle'; right.textContent = `next duty: ${nextStr || 'N/A'}`;
                     row.appendChild(left); row.appendChild(right);
@@ -1663,7 +2063,17 @@ function renderAlerts() {
                                 rowsForExport.push({ name: name, staff: String(s.staff), nextDuty: nextStr, rtwFlags: (s.rtwFlags||[]).join('; ') });
                             });
                             tbl.appendChild(tb); list.appendChild(tbl);
-                            list.querySelectorAll('.staff-link').forEach(a => a.addEventListener('click', (ev) => { ev.preventDefault(); try { showStaffDetails(a.dataset.staff); } catch (e) { console.error('showStaffDetails failed', e); } }));
+                            // delegate staff-link clicks to the modal container to avoid per-link listeners
+                            try {
+                                list.addEventListener('click', (ev) => {
+                                    try {
+                                        const a = ev.target && ev.target.closest ? ev.target.closest('.staff-link') : null;
+                                        if (!a) return;
+                                        ev.preventDefault();
+                                        try { scheduleShowStaffDetails(a.dataset.staff); } catch (e) { console.error('scheduleShowStaffDetails failed', e); }
+                                    } catch (e) { /* ignore per-click errors */ }
+                                });
+                            } catch (e) { /* ignore */ }
                             const exportBtn = m.querySelector('#alerts-no-rtw-export');
                             if (exportBtn) exportBtn.addEventListener('click', () => {
                                 try {
@@ -1702,7 +2112,16 @@ function renderAlerts() {
                                 rowsForExport.push({ name: e.surname + (e.forenames ? ', '+e.forenames : ''), staff: e.staffNumber, validTo: e.validTo, days: e.daysUntil });
                             });
                             tbl.appendChild(tb); il.appendChild(tbl);
-                            il.querySelectorAll('.staff-link').forEach(a => a.addEventListener('click', (ev) => { ev.preventDefault(); try { showStaffDetails(a.dataset.staff); } catch (err) { console.error('showStaffDetails failed', err); } }));
+                            try {
+                                il.addEventListener('click', (ev) => {
+                                    try {
+                                        const a = ev.target && ev.target.closest ? ev.target.closest('.staff-link') : null;
+                                        if (!a) return;
+                                        ev.preventDefault();
+                                        try { scheduleShowStaffDetails(a.dataset.staff); } catch (err) { console.error('scheduleShowStaffDetails failed', err); }
+                                    } catch (e) { /* ignore */ }
+                                });
+                            } catch (e) { /* ignore */ }
                             const exportBtn = im.querySelector('#nmc-expiry-export');
                             if (exportBtn) exportBtn.addEventListener('click', () => {
                                 try {
@@ -1832,6 +2251,15 @@ function renderAlerts() {
         else exportElementAsSvg(summaryEl, 'alerts_summary.svg');
     });
 
+    // If there are no rules, don't render the results table (user requested no matched rows visible until they add rules)
+    if (!rules || rules.length === 0) {
+        try {
+            // ensure count reflects zero matched rows and keep summaries visible
+            const countEl = tabContent.querySelector('#alerts-count'); if (countEl) countEl.textContent = `0 matched rows`;
+        } catch (e) { /* ignore */ }
+        return; // stop before constructing the table and row handlers
+    }
+
     const table = document.createElement('table'); table.className = 'w-full text-sm';
     // Use auto layout so columns size to content; enable horizontal scroll on the container
     table.style.tableLayout = 'auto';
@@ -1892,8 +2320,8 @@ function renderAlerts() {
                 const w = colWidths[h] ? ` style="width:${escapeHtml(colWidths[h])};box-sizing:border-box;white-space:nowrap"` : ' style="box-sizing:border-box;white-space:nowrap"';
                 return `<td class="px-2 py-1 border-b" title="${escapeHtml(String(val))}"${w}>${truncated}</td>`;
             }).join('');
-            // determine staff key for this row
-            let staffVal = getValueByCanonical(r.data, 'Staff Number') || getValueByCanonical(r.data, 'Assignment No');
+            // determine staff key for this row (prefer precomputed __staffKey added during buildResults)
+            let staffVal = (r.__staffKey && String(r.__staffKey).trim()) || getStaffKey(r.data) || getValueByCanonical(r.data, 'Assignment No');
             let lastIso = null; let nextIso = null;
             if (staffVal) {
                 try { staffVal = String(staffVal).trim(); } catch (e) { staffVal = String(staffVal || ''); }
@@ -1904,14 +2332,31 @@ function renderAlerts() {
             const nextDisplayBase = nextIso ? String(formatForDisplay(nextIso, r.__locale)) : '';
 
             // Add a compact RTW badge column (green if RTW done, red if missing and had shift after sickness)
-            const staffKey = String(getValueByCanonical(r.data, 'Staff Number') || getValueByCanonical(r.data, 'Assignment No') || '').trim();
+            const staffKey = (staffVal ? String(staffVal) : '').trim();
             let badgeHtml = '';
             try {
-                const staffObj = (res.perStaffMap && res.perStaffMap[staffKey]) || null;
+                // Resolve staffObj from perStaffMap. Try exact match first, then fall back to
+                // numeric-only matching across keys (handles '27029932-2', spacing, leading zeros, etc.).
+                let staffObj = null;
+                if (res.perStaffMap && staffKey) staffObj = res.perStaffMap[staffKey] || null;
+                if (!staffObj && res.perStaffMap && staffKey) {
+                    const norm = String(staffKey).replace(/\D/g, '');
+                    if (norm) {
+                        for (const k of Object.keys(res.perStaffMap || {})) {
+                            try {
+                                if (String(k).replace(/\D/g, '') === norm) { staffObj = res.perStaffMap[k]; break; }
+                            } catch (e) { /* ignore per-key errors */ }
+                        }
+                    }
+                }
                 if (staffObj) {
                     if (staffObj.rtwDone) badgeHtml = `<span class="badge green" title="RTW recorded">RTW</span>`;
                     else if (staffObj.hadShiftAfter) badgeHtml = `<span class="badge red" title="Had shift after sickness, no RTW">No RTW</span>`;
                     else badgeHtml = `<span class="badge gray" title="No recent duty">OK</span>`;
+                    // highlight continuing sickness if detected (merged ranges or ongoing end date)
+                    try {
+                        if (staffObj.continuingSickness) badgeHtml += ` <span class="badge amber" title="Continuing sickness">Continuing</span>`;
+                    } catch (e) { /* ignore */ }
                 }
             } catch (e) { badgeHtml = ''; }
             // Enrich the Next Duty display with the shift detail when available (uses nextDutyDetailMap produced by buildResults)
@@ -1946,11 +2391,134 @@ function renderAlerts() {
         // Delegated handler for per-row actions (Details). This is more reliable than attaching
         // individual listeners to each row element and survives reflows.
         try {
-            table.addEventListener('click', (ev) => {
-                const btn = ev.target.closest && ev.target.closest('.row-action');
-                if (!btn) return;
+            // resilient fallback to show staff details even when the scoped showStaffDetails is not exposed
+            try {
+                if (typeof window !== 'undefined' && !window.showStaffDetailsSafe) {
+                    window.showStaffDetailsSafe = function (staffId) {
+                        try {
+                            console.debug('showStaffDetailsSafe called', { staffId });
+                            const entries = [];
+                            const wanted = String(staffId || '').trim();
+                            const wantedDigits = wanted.replace(/\D/g, '');
+
+                            // Fast path: use prebuilt index when available (maps numeric staff -> hits)
+                            try {
+                                const idx = (typeof window !== 'undefined' && window.__staffIndex) ? window.__staffIndex : null;
+                                if (idx && wantedDigits) {
+                                    const hits = idx[wantedDigits] || [];
+                                    if (hits && hits.length) {
+                                        hits.forEach(h => { try { entries.push({ file: h.file, row: h.row, rowIndex: h.rowIndex }); } catch (e) {} });
+                                    }
+                                }
+                            } catch (e) { /* ignore index errors */ }
+
+                            // If index miss, fall back to scanning files (previous logic)
+                            if (!entries.length) {
+                                const files = (typeof getParsedFiles === 'function') ? getParsedFiles() : (window.__getParsedFiles ? window.__getParsedFiles() : []);
+                                // Primary pass: prefer explicit staff extraction (precomputed or via getStaffKey)
+                                (files || []).forEach(f => {
+                                    (f.dataRows || []).forEach((r, idx) => {
+                                        try {
+                                            const rawKey = String((r && r.__staffKey) || getStaffKey(r) || '').trim();
+                                            const rawDigits = rawKey.replace(/\D/g, '');
+                                            if (rawKey && (rawKey === wanted || (rawDigits && wantedDigits && rawDigits === wantedDigits))) {
+                                                entries.push({ file: f, row: r, rowIndex: idx });
+                                                return;
+                                            }
+                                            const alt = String(getStaffKey(r) || '').trim();
+                                            const altDigits = alt.replace(/\D/g, '');
+                                            if (alt && (alt === wanted || (altDigits && wantedDigits && altDigits === wantedDigits))) {
+                                                entries.push({ file: f, row: r, rowIndex: idx });
+                                                return;
+                                            }
+                                        } catch (e) { /* ignore per-row errors */ }
+                                    });
+                                });
+                            }
+
+                            // If none found, do a relaxed scan across all fields (some sources put staff id in odd columns)
+                            if (!entries.length) {
+                                const sampleKeys = [];
+                                (files || []).forEach(f => {
+                                    (f.dataRows || []).forEach((r, idx) => {
+                                        try {
+                                            if (sampleKeys.length < 30) {
+                                                const sample = String(getStaffKey(r) || (r && (r['Staff Number'] || r['Assignment No'] || r['Staff'] || '')) || '');
+                                                sampleKeys.push(sample);
+                                            }
+                                            // Scan every cell value for the wanted digits as a substring match
+                                            const found = Object.keys(r || {}).some(k => {
+                                                try {
+                                                    const v = r[k];
+                                                    if (v == null) return false;
+                                                    const s = typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : JSON.stringify(v));
+                                                    if (!s) return false;
+                                                    if (s.includes(wanted)) return true;
+                                                    const digits = String(s).replace(/\D/g, '');
+                                                    if (digits && wantedDigits && digits === wantedDigits) return true;
+                                                    // also accept when digits contain the wantedDigits (e.g. cell 'ID:27029932-2')
+                                                    if (digits && wantedDigits && digits.indexOf(wantedDigits) !== -1) return true;
+                                                    return false;
+                                                } catch (e) { return false; }
+                                            });
+                                            if (found) entries.push({ file: f, row: r, rowIndex: idx });
+                                        } catch (e) { /* ignore */ }
+                                    });
+                                });
+                                if (!entries.length) {
+                                    try { console.debug('showStaffDetailsSafe: no direct matches; diagnostic sampleKeys', { wanted, wantedDigits, sampleKeys: sampleKeys.slice(0,20) }); } catch (e) {}
+                                }
+                            }
+
+                            // create modal similar to showStaffDetails implementation
+                            const modalId = 'staff-detail-modal';
+                            let md = document.getElementById(modalId);
+                            if (!md) {
+                                md = document.createElement('div'); md.id = modalId; md.className = 'modal-backdrop';
+                                md.innerHTML = `<div class="modal" style="max-width:900px"><div class="flex justify-between items-center mb-2"><h2 class="text-lg font-semibold">Staff details</h2><button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading">&times;</button></div><div class="modal-body p-2"><div id="staff-detail-body" class="text-sm"></div></div><div class="modal-footer mt-3 text-right"><button id="staff-detail-close" class="px-3 py-1 rounded">Close</button></div></div>`;
+                                document.body.appendChild(md);
+                                try { md.querySelector('.modal-close-btn').addEventListener('click', () => md.classList.remove('active')); } catch (e) {}
+                                try { md.querySelector('#staff-detail-close').addEventListener('click', () => md.classList.remove('active')); } catch (e) {}
+                            }
+                            const body = md.querySelector('#staff-detail-body'); body.innerHTML = '';
+                            try {
+                                const countEl = document.createElement('div'); countEl.className = 'text-sm text-subtle mb-2'; countEl.textContent = `Matches: ${entries.length}`;
+                                body.appendChild(countEl);
+                                renderStaffDetailsEntries(body, entries);
+                            } catch (e) { body.textContent = 'No rows found for this staff in the library.'; }
+                            md.classList.add('active');
+                            console.debug('showStaffDetailsSafe returning', { staffId, matches: entries.length });
+                            return true;
+                        } catch (ex) { console.error('showStaffDetailsSafe failed', ex); return false; }
+                    };
+                }
+            } catch (e) { /* ignore */ }
+
+            // helper: open a lightweight modal immediately and defer heavy scanning to idle time
+            function scheduleShowStaffDetails(staff) {
                 try {
-                    ev.preventDefault();
+                    const modalId = 'staff-detail-modal';
+                    let md = document.getElementById(modalId);
+                    if (!md) {
+                        md = document.createElement('div'); md.id = modalId; md.className = 'modal-backdrop';
+                        md.innerHTML = `<div class="modal" style="max-width:900px"><div class="flex justify-between items-center mb-2"><h2 class="text-lg font-semibold">Staff details</h2><button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading">&times;</button></div><div class="modal-body p-2"><div id="staff-detail-body" class="text-sm">Loading…</div></div><div class="modal-footer mt-3 text-right"><button id="staff-detail-close" class="px-3 py-1 rounded">Close</button></div></div>`;
+                        document.body.appendChild(md);
+                        try { md.querySelector('.modal-close-btn').addEventListener('click', () => md.classList.remove('active')); } catch (e) {}
+                        try { md.querySelector('#staff-detail-close').addEventListener('click', () => md.classList.remove('active')); } catch (e) {}
+                    } else {
+                        const body = md.querySelector('#staff-detail-body'); if (body) body.textContent = 'Loading…';
+                    }
+                    md.classList.add('active');
+                    // defer the heavy search to idle time to keep click handler responsive
+                    const invoke = () => { try { if (window && typeof window.showStaffDetailsSafe === 'function') window.showStaffDetailsSafe(staff); else if (typeof showStaffDetails === 'function') showStaffDetails(staff); } catch (e) { console.error('deferred showStaffDetails failed', e); } };
+                    if (typeof requestIdleCallback === 'function') requestIdleCallback(invoke, { timeout: 500 });
+                    else setTimeout(invoke, 20);
+                } catch (e) { console.error('scheduleShowStaffDetails failed', e); }
+            }
+
+            // handler extracted so it can be used both by delegated listener and direct per-button bindings
+            function handleRowAction(btn) {
+                try {
                     // Prefer explicit data-staff attribute if available to avoid index mismatch
                     const staffFromAttr = btn.dataset && btn.dataset.staff ? String(btn.dataset.staff).trim() : null;
                     let staff = staffFromAttr;
@@ -1959,18 +2527,31 @@ function renderAlerts() {
                         if (Number.isNaN(idx)) return;
                         const row = (res && Array.isArray(res.rows)) ? res.rows[idx] : null;
                         if (!row) return;
-                        staff = String(getValueByCanonical(row.data, 'Staff Number') || getValueByCanonical(row.data, 'Assignment No') || getValueByCanonical(row.data, 'Staff') || '').trim();
+                        // Prefer a precomputed key then centralized helper for robust extraction
+                        staff = String((row.__staffKey && String(row.__staffKey).trim()) || getStaffKey(row.data) || '').trim();
                     }
                     console.debug('alerts table action clicked', { staff });
                     if (staff) {
                         try {
-                            const fn = (typeof showStaffDetails !== 'undefined') ? showStaffDetails : (window && window.showStaffDetails ? window.showStaffDetails : null);
-                            if (typeof fn === 'function') fn(staff);
-                        } catch (e) { console.error('failed to open staff details', e); }
+                            console.debug('scheduling showStaffDetails', { staff });
+                            scheduleShowStaffDetails(staff);
+                        } catch (e) { console.error('failed to schedule staff details', e); }
                     }
                 } catch (e) { console.error('alerts table action failed', e); }
+            }
+
+            table.addEventListener('click', (ev) => {
+                try {
+                    const btn = ev.target && ev.target.closest ? ev.target.closest('.row-action') : null;
+                    if (!btn) return;
+                    ev.preventDefault();
+                    handleRowAction(btn);
+                } catch (e) { /* ignore click handling errors */ }
             });
-        } catch (e) { /* ignore delegation errors */ }
+
+            // Per-button bindings removed: delegation handles clicks for dynamic rows and avoids double-invocation.
+            // (If someone expects per-button bindings, they can be reintroduced, but delegation is preferred.)
+        } catch (e) { /* ignore delegation setup errors */ }
         // Make columns resizable by dragging the right edge of headers
         (function makeColumnsResizable(tbl, colsArr) {
             if (!tbl) return;
@@ -2155,6 +2736,8 @@ function renderAlerts() {
                     toast(`Failed to add ${f.name}`);
                 }
             }
+            // rebuild staff index after files are added
+            try { if (typeof buildStaffIndex === 'function') { buildStaffIndex(); } } catch (e) { console.warn('rebuild staff index after drop failed', e); }
             // rebuild UI to show new files and update alerts
             buildUI();
             updateAlerts();
@@ -2169,46 +2752,77 @@ function renderAlerts() {
             const localeBtn = document.createElement('button'); localeBtn.className = 'locale-badge text-xs px-2 py-1 border rounded';
             const currentLocale = (f._locale || 'uk').toString().toLowerCase(); localeBtn.textContent = currentLocale.toUpperCase();
             localeBtn.title = 'Click to toggle locale preference for this file';
-            div.appendChild(cb); div.appendChild(lbl); div.appendChild(localeBtn); filesEl.appendChild(div);
-            cb.addEventListener('change', (e) => { if (e.target.checked) selectedFileIds.add(f.id); else selectedFileIds.delete(f.id); saveAlertsSelectedFiles(); updateAlerts(); });
-            localeBtn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                const lib = getLibraryItems();
-                const item = lib.find(x => x && x.id === f.id);
-                if (!item) return alert('File not found in library');
-                const newLocale = ((item._locale || 'uk').toString().toLowerCase() === 'uk') ? 'us' : 'uk';
-                try {
-                    item._locale = newLocale;
-                    // Re-normalize stored rows using the new locale so slashed dates are stored as the correct ISO
-                    try {
-                        if (Array.isArray(item.dataRows)) {
-                            const normalized = normalizeFileDates(item.dataRows, newLocale);
-                            item.dataRows = normalized;
-                        }
-                    } catch (errNorm) { console.warn('normalize on locale toggle failed', errNorm); }
-                    // persist change to DB (persist dataRows + locale)
-                    await dbSave(STORES.FILES, { ...item, _locale: newLocale, dataRows: item.dataRows });
-                    // trigger UI refresh: update locale badge, rebuild the Alerts UI and re-run the results
-                    localeBtn.textContent = newLocale.toUpperCase();
-                    try { window.__ALERTS_FORCE_FILE_DISPLAY = true; } catch (e) { /* ignore */ }
-                    try { buildUI(); } catch (e) { /* ignore */ }
-                    try { updateAlerts(); } catch (e) { /* ignore */ }
-                    try { document.dispatchEvent(new CustomEvent('terra:dateDisplayChanged', { detail: { value: newLocale } })); } catch (e) { /* ignore */ }
-                    // clear the transient flag after a short delay and refresh UI again
-                    setTimeout(() => {
-                        try { window.__ALERTS_FORCE_FILE_DISPLAY = false; } catch (e) { }
-                        try { buildUI(); } catch (e) { }
-                        try { updateAlerts(); } catch (e) { }
-                        try { document.dispatchEvent(new CustomEvent('terra:dateDisplayChanged', { detail: { value: localStorage.getItem('TERRA_DATE_DISPLAY_V2') || localStorage.getItem('TERRA_DATE_DISPLAY') || 'uk' } })); } catch (e) { }
-                    }, 3000);
-                    console.debug('file locale toggled and re-normalized', item.name, newLocale);
-                    toast(`File locale for ${item.name} set to ${newLocale}`);
-                } catch (err) {
-                    console.error('Failed to persist file locale', err);
-                    alert('Failed to update file locale');
-                }
-            });
+            // delete button to remove file from library and DB
+            const delBtn = document.createElement('button');
+            delBtn.className = 'px-2 py-1 rounded border text-sm text-red-600';
+            delBtn.title = `Delete ${f.name}`;
+            delBtn.textContent = 'Delete';
+            // mark actions so we can use a single delegated handler instead of per-element listeners
+            localeBtn.dataset.action = 'toggle-locale';
+            delBtn.dataset.action = 'delete-file';
+            div.appendChild(cb); div.appendChild(lbl); div.appendChild(localeBtn); div.appendChild(delBtn); filesEl.appendChild(div);
+            // per-item listeners removed in favor of a delegated handler bound once below
         });
+
+        // Delegated handlers for files list (one-time bindings rather than per-file)
+        try {
+            filesEl.addEventListener('change', (e) => {
+                try {
+                    const cb = e.target && e.target.closest ? e.target.closest('input[type=checkbox]') : null;
+                    if (!cb) return;
+                    const id = cb.dataset && cb.dataset.id ? cb.dataset.id : null;
+                    if (!id) return;
+                    if (cb.checked) selectedFileIds.add(id); else selectedFileIds.delete(id);
+                    saveAlertsSelectedFiles(); updateAlerts();
+                } catch (err) { /* ignore per-change errors */ }
+            });
+            filesEl.addEventListener('click', async (e) => {
+                try {
+                    const btn = e.target && e.target.closest ? e.target.closest('button') : null;
+                    if (!btn) return;
+                    const action = btn.dataset && btn.dataset.action ? btn.dataset.action : null;
+                    // find the nearest checkbox label to extract file id
+                    const wrapper = btn.closest && btn.closest('div') ? btn.closest('div') : null;
+                    let fileId = null;
+                    if (wrapper) {
+                        const cb = wrapper.querySelector && wrapper.querySelector('input[type=checkbox]') ? wrapper.querySelector('input[type=checkbox]') : null;
+                        if (cb && cb.dataset) fileId = cb.dataset.id;
+                    }
+                    if (action === 'toggle-locale' && fileId) {
+                        e.preventDefault();
+                        const lib = getLibraryItems();
+                        const item = lib.find(x => x && x.id === fileId);
+                        if (!item) return alert('File not found in library');
+                        const newLocale = ((item._locale || 'uk').toString().toLowerCase() === 'uk') ? 'us' : 'uk';
+                        try {
+                            item._locale = newLocale;
+                            try { if (Array.isArray(item.dataRows)) item.dataRows = normalizeFileDates(item.dataRows, newLocale); } catch (errNorm) { console.warn('normalize on locale toggle failed', errNorm); }
+                            await dbSave(STORES.FILES, { ...item, _locale: newLocale, dataRows: item.dataRows });
+                            // update UI
+                            try { window.__ALERTS_FORCE_FILE_DISPLAY = true; } catch (e) {}
+                            try { buildUI(); } catch (e) {}
+                            try { updateAlerts(); } catch (e) {}
+                            try { document.dispatchEvent(new CustomEvent('terra:dateDisplayChanged', { detail: { value: newLocale } })); } catch (e) {}
+                            setTimeout(() => { try { window.__ALERTS_FORCE_FILE_DISPLAY = false; buildUI(); updateAlerts(); document.dispatchEvent(new CustomEvent('terra:dateDisplayChanged', { detail: { value: localStorage.getItem('TERRA_DATE_DISPLAY_V2') || localStorage.getItem('TERRA_DATE_DISPLAY') || 'uk' } })); } catch (e) {} }, 3000);
+                            toast(`File locale for ${item.name} set to ${newLocale}`);
+                        } catch (err) { console.error('Failed to persist file locale', err); alert('Failed to update file locale'); }
+                    } else if (action === 'delete-file' && fileId) {
+                        e.preventDefault();
+                        const ok = confirm(`Delete "${fileId}" from the library? This cannot be undone.`);
+                        if (!ok) return;
+                        try {
+                            await dbDelete(STORES.FILES, fileId);
+                            try { removeLibraryItemById(fileId); } catch (inner) { console.warn('removeLibraryItemById failed', inner); }
+                            try { selectedFileIds.delete(fileId); saveAlertsSelectedFiles(); } catch (inner) {}
+                            try { buildUI(); } catch (inner) {}
+                            try { updateAlerts(); } catch (inner) {}
+                            try { if (typeof buildStaffIndex === 'function') buildStaffIndex(); } catch (e) { console.warn('rebuild staff index after delete failed', e); }
+                            toast(`Deleted file`);
+                        } catch (err) { console.error('Failed to delete file', err); alert('Failed to delete file from library'); }
+                    }
+                } catch (e) { /* ignore delegated click errors */ }
+            });
+        } catch (e) { /* ignore delegation setup errors */ }
 
         const addBtn = tabContent.querySelector('#alerts-add-rule');
         addBtn.addEventListener('click', async () => {
@@ -2230,8 +2844,104 @@ function renderAlerts() {
         updateAlerts();
     }
 
-    buildUI();
+        buildUI();
+    // Defer heavy work (alerts build and staff index) to idle so initial UI is snappy
+    try {
+        const doDeferred = () => {
+            try { updateAlerts(); } catch (e) { console.warn('deferred updateAlerts failed', e); }
+            try { if (typeof buildStaffIndex === 'function') buildStaffIndex(); } catch (e) { console.warn('deferred buildStaffIndex failed', e); }
+        };
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(doDeferred, { timeout: 300 }); else setTimeout(doDeferred, 50);
+    } catch (e) { console.warn('scheduling deferred alerts work failed', e); }
 }
+
+// Expose debug helpers for the browser console
+    try {
+    if (typeof window !== 'undefined') {
+        window.buildResultsDebug = function () {
+            try {
+                if (typeof buildResults === 'function') return buildResults();
+            } catch (e) { if (window.__ALERTS_DEBUG) console.debug('buildResults call failed in buildResultsDebug', e); }
+            // synthesize a result using library scan and diagnostics
+            try {
+                const perArr = (typeof computeRTWLibraryStats === 'function') ? computeRTWLibraryStats({ includeSources: true }) : [];
+                const perMap = {};
+                (perArr || []).forEach(p => { try { if (p && p.staff) perMap[String(p.staff)] = p; } catch (e) {} });
+                const diag = (typeof runAlertsDiagnostics === 'function') ? runAlertsDiagnostics() : { nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, ignoredDuties: [] };
+                return { headers: [], rows: [], diagnostics: diag, nextDutyMap: diag.nextDutyMap || {}, lastDutyMap: diag.lastDutyMap || {}, nextDutyDetailMap: diag.nextDutyDetailMap || {}, lastDutyDetailMap: diag.lastDutyDetailMap || {}, perStaffMap: perMap };
+            } catch (e) { console.error('buildResultsDebug synth failed', e); return null; }
+        };
+        window.updateAlertsDebug = function () { try { if (typeof updateAlerts === 'function') return updateAlerts(); console.warn('updateAlerts not defined in this scope'); } catch (e) { console.error('updateAlertsDebug failed', e); } };
+        window.getAlertsState = function () {
+            try {
+                if (typeof buildResults === 'function') return buildResults();
+            } catch (e) { if (window.__ALERTS_DEBUG) console.debug('getAlertsState: buildResults failed', e); }
+            try { return window.buildResultsDebug(); } catch (e) { console.error('getAlertsState failed to synthesize', e); return null; }
+        };
+    }
+} catch (e) { /* ignore window attach errors */ }
+
+        // Robust diagnostic that does not rely on buildResults existing as a callable symbol
+        try {
+            if (typeof window !== 'undefined') {
+                window.runAlertsDiagnostics = function () {
+                    try {
+                        const res = { nextDutyMap: {}, lastDutyMap: {}, nextDutyDetailMap: {}, lastDutyDetailMap: {}, ignoredDuties: [] };
+                        const rawSel = localStorage.getItem('TERRA_ALERTS_SELECTED_FILES');
+                        const sel = rawSel ? JSON.parse(rawSel) : [];
+                        let files = [];
+                        if (typeof getParsedFiles === 'function') files = getParsedFiles().filter(f => !sel.length || sel.includes(f.id));
+                        else if (typeof getLibraryItems === 'function') files = (getLibraryItems() || []).filter(f => f && f.isParsedFile && (!sel.length || sel.includes(f.id)));
+                        const toLocalIso = (dt) => { if (!(dt instanceof Date) || isNaN(dt)) return null; const y = dt.getFullYear(); const m = String(dt.getMonth()+1).padStart(2,'0'); const d = String(dt.getDate()).padStart(2,'0'); return `${y}-${m}-${d}`; };
+                        const today = new Date(); today.setHours(0,0,0,0);
+                        const nextDutyMeta = {}, lastDutyMeta = {};
+                        files.forEach(f => {
+                            (f.dataRows || []).forEach(r => {
+                                try {
+                                    const staffVal = (typeof getStaffKey === 'function') ? getStaffKey(r) : (String(r['Staff Number']||r['Assignment No']||r['Staff']||'').trim());
+                                    if (!staffVal) return;
+                                    const dutyRaw = (typeof getValueByCanonical === 'function') ? (getValueByCanonical(r, 'Duty Date') || getValueByCanonical(r, 'Next Duty')) : (r['Duty Date']||r['Next Duty']||r['Duty']||null);
+                                    if (!dutyRaw) return;
+                                    let dutyTypeVal = (typeof getValueByCanonical === 'function') ? getValueByCanonical(r, 'Shift Type') : (r['Shift Type']||r['ShiftType']||r['Type']||null);
+                                    if (dutyTypeVal == null) {
+                                        res.ignoredDuties.push({ file: f.name, rowObj: r, reason: 'Shift Type missing', dutyRaw });
+                                        return;
+                                    }
+                                    const low = String(dutyTypeVal || '').trim().toLowerCase();
+                                    const tokens = low.split(/[^a-z]+/).filter(Boolean);
+                                    let prio = -1;
+                                    if (/(?:\b|^)(?:ld|mgt|do)(?:\b|$)/i.test(low) || tokens.includes('rest')) prio = 0;
+                                    else if (tokens.includes('combined')) prio = 3;
+                                    else if (tokens.includes('day') || tokens.includes('night') || tokens.includes('n') || tokens.includes('am') || tokens.includes('pm') || tokens.includes('early') || tokens.includes('late') || tokens.includes('eve') || tokens.includes('evening') || tokens.includes('morning') || tokens.includes('oncall') ) prio = 2;
+                                    else if (tokens.includes('rest')) prio = 0;
+                                    if (prio < 0) { res.ignoredDuties.push({ file: f.name, rowObj: r, reason: 'Shift Type not counted', dutyRaw, shift: dutyTypeVal }); return; }
+                                    // parseToDate if available
+                                    let dt = null;
+                                    try { dt = (typeof parseToDate === 'function') ? parseToDate(dutyRaw, f._locale || 'uk') : (new Date(String(dutyRaw))); } catch (e) { dt = null; }
+                                    if (!dt || isNaN(dt)) { res.ignoredDuties.push({ file: f.name, rowObj: r, reason: 'Duty date parse failed', dutyRaw }); return; }
+                                    const d0 = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+                                    const iso = toLocalIso(dt) || toLocalIso(d0);
+                                    if (!iso) return;
+                                    const key = String(staffVal).trim();
+                                    if (!key) return;
+                                    if (d0.getTime() > today.getTime()) {
+                                        const meta = nextDutyMeta[key];
+                                        if (!meta) { nextDutyMeta[key] = { iso, prio }; res.nextDutyMap[key] = iso; res.nextDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; }
+                                        else { if (iso < meta.iso) { nextDutyMeta[key] = { iso, prio }; res.nextDutyMap[key] = iso; res.nextDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; } else if (iso === meta.iso && prio > meta.prio) { nextDutyMeta[key] = { iso, prio }; res.nextDutyMap[key] = iso; res.nextDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; } }
+                                    }
+                                    if (d0.getTime() <= today.getTime()) {
+                                        const meta = lastDutyMeta[key];
+                                        if (!meta) { lastDutyMeta[key] = { iso, prio }; res.lastDutyMap[key] = iso; res.lastDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; }
+                                        else { if (iso > meta.iso) { lastDutyMeta[key] = { iso, prio }; res.lastDutyMap[key] = iso; res.lastDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; } else if (iso === meta.iso && prio > meta.prio) { lastDutyMeta[key] = { iso, prio }; res.lastDutyMap[key] = iso; res.lastDutyDetailMap[key] = { iso, prio, shift: dutyTypeVal, dutyRaw }; } }
+                                    }
+                                } catch (e) { /* per-row ignore */ }
+                            });
+                        });
+                        return res;
+                    } catch (e) { console.error('runAlertsDiagnostics failed', e); return null; }
+                };
+            }
+        } catch (e) { /* ignore */ }
 
 // Diagnostic helper: run from browser console to print per-file/row date parsing and last-N-days match info
 try {
@@ -2379,8 +3089,14 @@ try {
                         // reuse computeRTWStats if available, otherwise compute locally to avoid ReferenceError
                         let perStaff = [];
                         // local helper: resolve a canonical header value from a row using alias mapping
+                        // Use the global, tolerant getValueByCanonical when available so we don't duplicate
+                        // matching logic (case/punctuation-insensitive, alias map, plural-aware).
                         const aliasMapForHelper = (typeof buildColumnAliasMap === 'function') ? buildColumnAliasMap() : {};
                         function localGetValueByCanonical(row, canonical) {
+                            try {
+                                if (typeof getValueByCanonical === 'function') return getValueByCanonical(row, canonical);
+                            } catch (e) { /* ignore and fallback */ }
+                            // Fallback: simple direct lookup using alias map if global helper isn't present
                             if (!row || !canonical) return undefined;
                             const canonicalToAliases = {};
                             Object.keys(aliasMapForHelper).forEach(k => {
@@ -2403,7 +3119,9 @@ try {
                             const sicknessCols = ['Sickness End','Sickness End Date','Sick End Date','SicknessEnd','Sick End','Sickness_End','End','End Date'];
                             const dutyCols = ['Duty Date','DutyDate','Duty','Shift Date','ShiftDate','Next Duty','NextDuty','Next Duty Date','NextDutyDate'];
                             const rtwCols = ['Return to Work','RTW','Return to work','Return','ReturnToWork','Return To Work Interview Completed','Return To Work Interview','RTW Interview Completed','RTW Interview'];
-                            const staffKeyFn = (r) => localGetValueByCanonical(r, 'Staff Number') || localGetValueByCanonical(r, 'Assignment No') || localGetValueByCanonical(r, 'Staff');
+                            const staffKeyFn = (r) => {
+                                try { return String((typeof getValueByCanonical === 'function' ? getValueByCanonical(r, 'Staff Number') : localGetValueByCanonical(r, 'Staff Number')) || (typeof getStaffKey === 'function' ? getStaffKey(r) : localGetValueByCanonical(r, 'Assignment No')) || '').trim(); } catch (e) { return String(localGetValueByCanonical(r, 'Staff Number') || localGetValueByCanonical(r, 'Assignment No') || localGetValueByCanonical(r, 'Staff') || '').trim(); }
+                            };
                             // local parseToDate fallback using parseDateByLocale (imported from ui.js) where available
                             function localParseToDate(input, locale) {
                                 if (!input && input !== 0) return null;
@@ -2532,17 +3250,34 @@ try {
                                 const lastDuty = lastOnOrBefore.length ? lastOnOrBefore[lastOnOrBefore.length - 1] : null;
                                 const hadShiftAfter = sickness && lastDuty && lastDuty.getTime() >= sickness.getTime();
                                 const sampleDuty = sortedDuties.length ? sortedDuties[0] : null;
-                                perStaff.push({ staff: s.staff, sickness, hadShiftAfter: !!hadShiftAfter, rtwDone: !!rtwDone, sampleDuty, nextDuty, lastDuty });
+                                const sicknessEnded = !!(sickness && sickness.getTime() <= today.getTime());
+                                const hadShiftAfterSickness = !!hadShiftAfter;
+                                const rtwInterviewDone = !!rtwDone;
+                                // Heuristic: if there are multiple raw sickness dates recorded for this staff
+                                // treat as continuing sickness so the UI can surface it even when ranges
+                                // didn't merge (for example due to differing Reason text).
+                                const continuingSickness = (Array.isArray(s.sicknessDates) && s.sicknessDates.length > 1) || false;
+                                perStaff.push({ staff: s.staff, sickness, sicknessEnded, hadShiftAfterSickness, hadShiftAfter: !!hadShiftAfter, rtwInterviewDone, rtwDone: !!rtwDone, sampleDuty, nextDuty, lastDuty, continuingSickness });
                             });
                         }
                         if (!includeSources) return perStaff;
                         // If sources requested, build a map of which files contributed sickness/duty/rtw for each staff
                         const staffSources = {};
                         files.forEach(f => {
-                            (f.dataRows || []).forEach(r => {
-                                const staff = String(localGetValueByCanonical(r, 'Staff Number') || localGetValueByCanonical(r, 'Assignment No') || localGetValueByCanonical(r, 'Staff') || '').trim();
-                                if (!staff) return;
-                                staffSources[staff] = staffSources[staff] || { sicknessFiles: new Set(), dutyFiles: new Set(), rtwFiles: new Set() };
+                (f.dataRows || []).forEach(r => {
+                    // Prefer centralized getStaffKey when present, otherwise fall back to localGetValueByCanonical
+                    let staff = '';
+                    try {
+                        if (typeof getStaffKey === 'function') staff = String(getStaffKey(r) || '').trim();
+                        else {
+                            try {
+                                if (typeof getStaffKey === 'function') staff = String(getStaffKey(r) || '').trim();
+                                else staff = String(localGetValueByCanonical(r, 'Staff Number') || localGetValueByCanonical(r, 'Assignment No') || localGetValueByCanonical(r, 'Staff') || '').trim();
+                            } catch (e) { staff = String(localGetValueByCanonical(r, 'Staff Number') || localGetValueByCanonical(r, 'Assignment No') || localGetValueByCanonical(r, 'Staff') || '').trim(); }
+                        }
+                    } catch (e) { /* ignore staff extraction errors */ }
+                    if (!staff) return;
+                    staffSources[staff] = staffSources[staff] || { sicknessFiles: new Set(), dutyFiles: new Set(), rtwFiles: new Set() };
                                 // sickness
                                 const sicknessCols = ['Sickness End','Sickness End Date','Sick End Date','SicknessEnd','Sick End','Sickness_End'];
                                 for (const sc of sicknessCols) {
@@ -2586,17 +3321,25 @@ function setupSettings() {
                 <div class="modal">
                     <h2 class="text-xl font-bold">Settings</h2>
                     <div class="mt-4">
-                        <label for="theme-select">Theme</label>
-                        <select id="theme-select" class="block mt-2 p-2">
-                            <option value="light">Light</option>
-                            <option value="dark">Dark</option>
-                            <option value="midnight">Midnight</option>
-                            <option value="teal">Teal</option>
-                            <option value="coral">Coral</option>
-                            <option value="forest">Forest</option>
-                            <option value="sunset">Sunset</option>
-                            <option value="lavender">Lavender</option>
-                        </select>
+                        <label for="theme-swatches">Theme</label>
+                        <div id="theme-swatches" class="theme-swatch-grid mt-2" role="list" aria-label="Theme choices">
+                          <button role="listitem" class="theme-swatch" data-theme="light" title="Light" aria-pressed="false"><span class="swatch-label">Light</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="dark" title="Dark" aria-pressed="false"><span class="swatch-label">Dark</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="midnight" title="Midnight" aria-pressed="false"><span class="swatch-label">Midnight</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="teal" title="Teal" aria-pressed="false"><span class="swatch-label">Teal</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="coral" title="Coral" aria-pressed="false"><span class="swatch-label">Coral</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="forest" title="Forest" aria-pressed="false"><span class="swatch-label">Forest</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="sunset" title="Sunset" aria-pressed="false"><span class="swatch-label">Sunset</span></button>
+                          <button role="listitem" class="theme-swatch" data-theme="lavender" title="Lavender" aria-pressed="false"><span class="swatch-label">Lavender</span></button>
+                        </div>
+                        <div class="mt-3">
+                          <button id="save-theme-btn" class="px-3 py-1 rounded bg-blue-600 text-white">Save theme</button>
+                          <button id="reset-theme-btn" class="px-3 py-1 rounded btn-secondary ml-2">Reset</button>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <label for="merge-by-reason">Merge adjacent sickness rows only when Reason matches</label>
+                        <div class="mt-2 text-sm"><input type="checkbox" id="merge-by-reason" /> <span class="text-subtle">Require identical Reason text to merge adjacent sickness ranges</span></div>
                     </div>
                     <div class="mt-4">
                         <label for="date-display-select">Date display</label>
@@ -2638,18 +3381,148 @@ function setupSettings() {
                 toast('Cleared saved data.');
                 modal.classList.remove('active');
             });
-            // wire theme select change
-            const themeSelect = modal.querySelector('#theme-select');
-            themeSelect.addEventListener('change', (e) => {
-                const t = e.target.value || 'light';
-                document.documentElement.setAttribute('data-theme', t);
+            // wire theme swatches
+            const swatchesContainer = modal.querySelector('#theme-swatches');
+            const swatches = Array.from(modal.querySelectorAll('.theme-swatch'));
+            let pendingTheme = localStorage.getItem('TERRA_THEME') || 'light';
+
+            function applyPreviewTheme(name) {
+                if (!name) return;
+                document.documentElement.setAttribute('data-theme', name);
+            }
+
+            function updateSwatchStates(activeName) {
+                swatches.forEach(s => {
+                    const name = s.dataset.theme;
+                    const pressed = name === activeName;
+                    s.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+                    s.classList.toggle('selected', pressed);
+                });
+            }
+
+            // initialize
+            updateSwatchStates(pendingTheme);
+
+            // initialize merge-by-reason checkbox
+            const mergeByReasonCheckbox = modal.querySelector('#merge-by-reason');
+            try {
+                const saved = localStorage.getItem('TERRA_MERGE_SICKNESS_BY_REASON');
+                mergeByReasonCheckbox.checked = saved === 'true';
+            } catch (e) { mergeByReasonCheckbox.checked = false; }
+
+            swatches.forEach(s => {
+                const name = s.dataset.theme;
+                // live preview on mouseenter/focus (temporary)
+                s.addEventListener('mouseenter', () => applyPreviewTheme(name));
+                s.addEventListener('focus', () => applyPreviewTheme(name));
+                // revert preview when pointer leaves or element loses focus
+                s.addEventListener('mouseleave', () => applyPreviewTheme(pendingTheme));
+                s.addEventListener('blur', () => applyPreviewTheme(pendingTheme));
+                // commit selection on click (updates pendingTheme and previews it)
+                s.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    pendingTheme = name;
+                    updateSwatchStates(pendingTheme);
+                    applyPreviewTheme(pendingTheme);
+                });
+                // keyboard: Space/Enter should select and preview; arrow keys navigate
+                s.addEventListener('keydown', (e) => {
+                    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); pendingTheme = name; updateSwatchStates(pendingTheme); applyPreviewTheme(pendingTheme); }
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); const idx = swatches.indexOf(s); const next = swatches[(idx+1)%swatches.length]; next.focus(); }
+                    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); const idx = swatches.indexOf(s); const prev = swatches[(idx-1+swatches.length)%swatches.length]; prev.focus(); }
+                });
+            });
+
+            // Unsaved indicator element next to save/reset
+            const btnHolder = modal.querySelector('.mt-3');
+            const unsavedEl = document.createElement('span');
+            unsavedEl.id = 'settings-unsaved';
+            unsavedEl.className = 'ml-3 text-sm text-subtle';
+            unsavedEl.style.display = 'none';
+            unsavedEl.textContent = 'Unsaved changes';
+            if (btnHolder) btnHolder.appendChild(unsavedEl);
+
+            const saveBtn = modal.querySelector('#save-theme-btn');
+            const resetBtn = modal.querySelector('#reset-theme-btn');
+
+            // capture saved values at modal open for change detection
+            const savedThemeAtOpen = localStorage.getItem('TERRA_THEME') || 'light';
+            const savedMergeAtOpen = localStorage.getItem('TERRA_MERGE_SICKNESS_BY_REASON') === 'true';
+            const savedDateDisplayAtOpen = localStorage.getItem('TERRA_DATE_DISPLAY_V2') || localStorage.getItem('TERRA_DATE_DISPLAY') || 'uk';
+            const savedAmbigAtOpen = localStorage.getItem('TERRA_AMBIG_DATE_PREF') || 'auto';
+
+            function updateUnsavedIndicator() {
+                try {
+                    const mergeNow = modal.querySelector('#merge-by-reason') ? modal.querySelector('#merge-by-reason').checked : false;
+                    const dateNow = modal.querySelector('#date-display-select') ? modal.querySelector('#date-display-select').value : savedDateDisplayAtOpen;
+                    const ambigNow = modal.querySelector('#ambig-date-pref') ? modal.querySelector('#ambig-date-pref').value : savedAmbigAtOpen;
+                    const themeNow = pendingTheme || savedThemeAtOpen;
+                    const changed = (String(themeNow) !== String(savedThemeAtOpen)) || (mergeNow !== savedMergeAtOpen) || (dateNow !== savedDateDisplayAtOpen) || (ambigNow !== savedAmbigAtOpen);
+                    unsavedEl.style.display = changed ? 'inline-block' : 'none';
+                } catch (e) { /* ignore */ }
+            }
+
+            // wire up controls to update unsaved indicator
+            try {
+                modal.querySelectorAll('.theme-swatch').forEach(s => s.addEventListener('click', updateUnsavedIndicator));
+                const mergeCheckbox = modal.querySelector('#merge-by-reason'); if (mergeCheckbox) mergeCheckbox.addEventListener('change', updateUnsavedIndicator);
+                const dateSel = modal.querySelector('#date-display-select'); if (dateSel) dateSel.addEventListener('change', updateUnsavedIndicator);
+                const ambigSel = modal.querySelector('#ambig-date-pref'); if (ambigSel) ambigSel.addEventListener('change', updateUnsavedIndicator);
+            } catch (e) { /* ignore wiring errors */ }
+
+            // initialise unsaved indicator
+            updateUnsavedIndicator();
+
+            saveBtn.addEventListener('click', () => {
+                const t = pendingTheme || 'light';
                 localStorage.setItem('TERRA_THEME', t);
-                toast(`Theme set to ${t}`);
+                document.documentElement.setAttribute('data-theme', t);
+                updateSwatchStates(t);
+                try {
+                    const mergeByReasonCheckboxNow = modal.querySelector('#merge-by-reason');
+                    if (mergeByReasonCheckboxNow) localStorage.setItem('TERRA_MERGE_SICKNESS_BY_REASON', mergeByReasonCheckboxNow.checked ? 'true' : 'false');
+                } catch (e) { /* ignore */ }
+                try {
+                    const dateVal = modal.querySelector('#date-display-select'); if (dateVal) localStorage.setItem('TERRA_DATE_DISPLAY_V2', dateVal.value || 'uk');
+                } catch (e) { /* ignore */ }
+                try {
+                    const ambigVal = modal.querySelector('#ambig-date-pref'); if (ambigVal) localStorage.setItem('TERRA_AMBIG_DATE_PREF', ambigVal.value || 'auto');
+                } catch (e) { /* ignore */ }
+                // show a general saved toast
+                toast('Settings saved');
+                // reset unsaved indicator baseline
+                unsavedEl.style.display = 'none';
+            });
+
+            resetBtn.addEventListener('click', () => {
+                localStorage.removeItem('TERRA_THEME');
+                const sys = 'light';
+                pendingTheme = sys;
+                document.documentElement.setAttribute('data-theme', sys);
+                updateSwatchStates(sys);
+                toast('Theme reset to default');
+                try { localStorage.removeItem('TERRA_MERGE_SICKNESS_BY_REASON'); const cb = modal.querySelector('#merge-by-reason'); if (cb) cb.checked = false; } catch (e) { /* ignore */ }
+                // reset other persisted settings
+                try { localStorage.removeItem('TERRA_DATE_DISPLAY_V2'); } catch (e) {}
+                try { localStorage.removeItem('TERRA_AMBIG_DATE_PREF'); } catch (e) {}
+                // clear unsaved indicator since reset counts as a committed action
+                unsavedEl.style.display = 'none';
             });
         }
         // set current value, default to saved or light
         const saved = localStorage.getItem('TERRA_THEME') || 'light';
-        const sel = modal.querySelector('#theme-select'); if (sel) sel.value = saved;
+        // If the swatch UI is present, update its state; otherwise ensure theme is applied
+        const swatchesNow = modal.querySelectorAll('.theme-swatch');
+        if (swatchesNow && swatchesNow.length) {
+            swatchesNow.forEach(s => {
+                const isActive = s.dataset.theme === saved;
+                s.classList.toggle('selected', isActive);
+                s.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            });
+            document.documentElement.setAttribute('data-theme', saved);
+        } else {
+            document.documentElement.setAttribute('data-theme', saved);
+        }
             // Prefer the v2 key to avoid confusion with earlier swapped-label era
             let savedDateDisplay = localStorage.getItem('TERRA_DATE_DISPLAY_V2');
             if (!savedDateDisplay) {
@@ -2726,10 +3599,10 @@ function setupSettings() {
         });
     }
 
-    // Wire up the Docs / How-to modal (navbar link)
+    // Wire up the Docs / How-to modal (navbar link) — loads README.md when available
     const docsLink = document.getElementById('docs-link');
     if (docsLink) {
-        docsLink.addEventListener('click', (ev) => {
+        docsLink.addEventListener('click', async (ev) => {
             ev.preventDefault();
             let howto = document.getElementById('howto-modal');
             if (!howto) {
@@ -2737,38 +3610,182 @@ function setupSettings() {
                 howto.id = 'howto-modal';
                 howto.className = 'modal-backdrop';
                 howto.innerHTML = `
-                    <div class="modal" role="dialog" aria-modal="true">
+                    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="howto-title">
                         <div class="flex justify-between items-center mb-2">
-                            <h2 class="text-lg font-semibold">Read Me — Quick Start</h2>
-                            <button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading">&times;</button>
+                            <h2 id="howto-title" class="text-lg font-semibold">Read Me</h2>
+                            <button class="modal-close-btn p-1 text-2xl font-bold leading-none text-muted hover:text-heading" aria-label="Close">&times;</button>
                         </div>
-                        <div class="modal-body max-h-[70vh] overflow-y-auto p-2" style="line-height:1.6">
-                            <h3 class="text-md font-semibold">Getting started</h3>
-                            <ol class="pl-4 mt-2 text-sm text-subtle">
-                                <li class="mb-2"><strong>1.</strong> Add a category: Click "+ Add Category" to create a group for related files.</li>
-                                <li class="mb-2"><strong>2.</strong> Add files: Click the category area or drag files in. Use CSV or XLSX for tables, and images for photos.</li>
-                                <li class="mb-2"><strong>3.</strong> Add notes: Click the <em>+ Note</em> button inside a category to write helpful comments about the files.</li>
-                                <li class="mb-2"><strong>4.</strong> Customize your report: Click <em>Customize Report</em> to choose which columns to include and the order they appear in.</li>
-                                <li class="mb-2"><strong>5.</strong> Title & logo: Use the project controls to add a report title, subtitle, and upload a small logo if you want it on the PDF.</li>
-                                <li class="mb-2"><strong>6.</strong> Create the PDF: Click <em>Generate PDF Report</em> to build and download the report (this may take a moment for many images).</li>
-                            </ol>
-
-                            <h3 class="text-md font-semibold mt-4">Helpful tips</h3>
-                            <ul class="pl-4 mt-2 text-sm text-subtle">
-                                <li class="mb-2">If a date looks wrong, you can change the file's date format in the customization screen.</li>
-                                <li class="mb-2">Images are optimized automatically to keep the download size small.</li>
-                                <li class="mb-2">Use the Library to reuse items across categories (notes, files, images).</li>
-                                <li class="mb-2">If things look unexpected, open <em>Settings</em> and choose <em>Clear saved data</em> to start fresh.</li>
-                            </ul>
-
-                            <p class="mt-4 text-sm text-subtle">Need help? Contact the person who shared this app with you or your project administrator for assistance.</p>
+                        <div class="modal-body max-h-[70vh] overflow-y-auto p-2" tabindex="0" style="line-height:1.6">
+                          <div class="howto-tab-buttons mb-3" role="tablist" aria-label="Documentation sections">
+                            <button id="howto-tab-builder" role="tab" aria-selected="true" class="tab-btn mr-2">Report Builder</button>
+                            <button id="howto-tab-alerts" role="tab" aria-selected="false" class="tab-btn">Alerts</button>
+                          </div>
+                          <div class="howto-tab-content">
+                            <div id="howto-panel-builder" class="tab-panel" role="tabpanel" aria-labelledby="howto-tab-builder">Loading content…</div>
+                            <div id="howto-panel-alerts" class="tab-panel" role="tabpanel" aria-labelledby="howto-tab-alerts" hidden></div>
+                          </div>
                         </div>
-                        <div class="modal-footer mt-3 text-right"><button id="howto-close" class="btn-secondary px-3 py-1 rounded">Close</button></div>
+                        <div class="modal-footer mt-3 text-right">
+                            <a id="howto-github" class="px-3 py-1 rounded btn-tertiary" target="_blank" rel="noopener">View on GitHub</a>
+                            <button id="howto-close" class="btn-secondary px-3 py-1 rounded ml-2">Close</button>
+                        </div>
                     </div>`;
                 document.body.appendChild(howto);
+
+                // event wiring: close buttons and backdrop
                 howto.querySelector('.modal-close-btn').addEventListener('click', () => howto.classList.remove('active'));
-                const closeBtn = howto.querySelector('#howto-close'); if (closeBtn) closeBtn.addEventListener('click', () => howto.classList.remove('active'));
+                howto.querySelector('#howto-close').addEventListener('click', () => howto.classList.remove('active'));
                 howto.addEventListener('click', (e) => { if (e.target === howto) howto.classList.remove('active'); });
+
+                // focus trap helpers
+                let lastFocused = null;
+                function trapFocus(modalEl) {
+                    const focusable = modalEl.querySelectorAll('a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])');
+                    const first = focusable[0];
+                    const last = focusable[focusable.length - 1];
+                    function handleKey(e) {
+                        if (e.key === 'Tab') {
+                            if (e.shiftKey) {
+                                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+                            } else {
+                                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+                            }
+                        }
+                    }
+                    modalEl._trapHandler = handleKey;
+                    document.addEventListener('keydown', handleKey);
+                    // remember and focus first
+                    lastFocused = document.activeElement;
+                    if (first) first.focus();
+                }
+                function releaseFocus(modalEl) {
+                    if (modalEl && modalEl._trapHandler) {
+                        document.removeEventListener('keydown', modalEl._trapHandler);
+                        modalEl._trapHandler = null;
+                    }
+                    try { if (lastFocused && typeof lastFocused.focus === 'function') lastFocused.focus(); } catch (e) { /* ignore */ }
+                }
+
+                // small, conservative markdown -> HTML converter for README.md (keeps things simple)
+                function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+                function simpleMarkdownToHtml(md) {
+                    if (!md) return '';
+                    // Normalize CRLF
+                    let out = escapeHtml(md);
+                    // code fences
+                    out = out.replace(/```([\s\S]*?)```/g, (m, code) => `<pre><code>${escapeHtml(code)}</code></pre>`);
+                    // headings
+                    out = out.replace(/^######\s?(.*)$/gm, '<h6>$1</h6>');
+                    out = out.replace(/^#####\s?(.*)$/gm, '<h5>$1</h5>');
+                    out = out.replace(/^####\s?(.*)$/gm, '<h4>$1</h4>');
+                    out = out.replace(/^###\s?(.*)$/gm, '<h3>$1</h3>');
+                    out = out.replace(/^##\s?(.*)$/gm, '<h2>$1</h2>');
+                    out = out.replace(/^#\s?(.*)$/gm, '<h1>$1</h1>');
+                    // bold and italics
+                    out = out.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                    out = out.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                    // links [text](url)
+                    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+                    // unordered lists
+                    out = out.replace(/(^|\n)\s*[-\*]\s+(.*)/g, '$1<li>$2</li>');
+                    out = out.replace(/(<li>[\s\S]*<\/li>)/g, (m) => '<ul>' + m + '</ul>');
+                    // paragraphs (simple)
+                    out = out.replace(/\n{2,}/g, '</p><p>');
+                    out = '<p>' + out + '</p>';
+                    // fix wrapping around lists
+                    out = out.replace(/<p>\s*<ul>/g, '<ul>');
+                    out = out.replace(/<\/ul>\s*<\/p>/g, '</ul>');
+                    return out;
+                }
+
+                // attempt to fetch README.md, fall back to embedded quick-start and alerts docs
+                (async () => {
+                    const panelBuilder = howto.querySelector('#howto-panel-builder');
+                    const panelAlerts = howto.querySelector('#howto-panel-alerts');
+                    const GH_URL = 'https://github.com/leapcoded/ITU-Site-Breakdown#readme';
+                    howto.querySelector('#howto-github').setAttribute('href', GH_URL);
+                    try {
+                        const res = await fetch('./README.md');
+                        if (!res.ok) throw new Error('not ok');
+                        const md = await res.text();
+                        if (md && md.trim()) {
+                            // split markdown into builder and alerts sections if possible
+                            const alertsRe = new RegExp('^##\\s*Alerts\\b.*$', 'im');
+                            const m = alertsRe.exec(md);
+                            if (m && typeof m.index === 'number') {
+                                const start = m.index;
+                                // find next top-level '## ' after start
+                                const after = md.slice(start + 1);
+                                const nextRe = /^##\s+/m;
+                                const nextMatch = nextRe.exec(after);
+                                const alertsMd = nextMatch ? md.slice(start, start + 1 + nextMatch.index) : md.slice(start);
+                                const builderMd = md.slice(0, start);
+                                panelBuilder.innerHTML = simpleMarkdownToHtml(builderMd || '# Report Builder\n\nNo builder docs found.');
+                                panelAlerts.innerHTML = simpleMarkdownToHtml(alertsMd);
+                            } else {
+                                // no Alerts heading found: show full README in builder and provide an alerts summary
+                                panelBuilder.innerHTML = simpleMarkdownToHtml(md);
+                                panelAlerts.innerHTML = `<h2>Alerts</h2><p>The README does not contain a separate Alerts section. Use the Alerts tab to create rules (contains, equals, within_days, numeric comparisons) to surface rows matching your criteria.</p>`;
+                            }
+                        } else throw new Error('empty');
+                    } catch (err) {
+                        // simple, friendly fallback content for non-technical users
+                        panelBuilder.innerHTML = `
+                            <h3 class="text-md font-semibold">Quick start</h3>
+                            <ol class="pl-4 mt-2 text-sm text-subtle">
+                                <li class="mb-2">Click + Add Category to make a section.</li>
+                                <li class="mb-2">Add files by clicking the area or dragging them in (tables and pictures).</li>
+                                <li class="mb-2">Use + Note to add short notes to a category.</li>
+                                <li class="mb-2">Click Customize Report to pick columns and order.</li>
+                                <li class="mb-2">Click Generate PDF Report to download your report.</li>
+                            </ol>
+                            <p class="mt-4 text-sm text-subtle">For more help, open the full README on GitHub: <a href="${GH_URL}" target="_blank" rel="noopener">Open README on GitHub</a></p>
+                        `;
+                        panelAlerts.innerHTML = `
+                            <h3 class="text-md font-semibold">Alerts</h3>
+                            <p class="text-sm text-subtle">Alerts help you find rows that match conditions you care about, such as "Role contains nurse" or "Expiry Date is within 30 days". Open the Alerts tab to create and save rules.</p>
+                            <p class="text-sm text-subtle">For step-by-step examples, open the full README on GitHub: <a href="${GH_URL}" target="_blank" rel="noopener">Open README on GitHub</a></p>
+                        `;
+                    }
+                })();
+
+                // tab switching logic
+                const tabBuilderBtn = howto.querySelector('#howto-tab-builder');
+                const tabAlertsBtn = howto.querySelector('#howto-tab-alerts');
+                const panelB = howto.querySelector('#howto-panel-builder');
+                const panelA = howto.querySelector('#howto-panel-alerts');
+                function activateTab(which) {
+                    const isBuilder = which === 'builder';
+                    tabBuilderBtn.setAttribute('aria-selected', isBuilder ? 'true' : 'false');
+                    tabAlertsBtn.setAttribute('aria-selected', isBuilder ? 'false' : 'true');
+                    if (isBuilder) { panelB.hidden = false; panelA.hidden = true; panelB.focus(); }
+                    else { panelB.hidden = true; panelA.hidden = false; panelA.focus(); }
+                }
+                tabBuilderBtn.addEventListener('click', () => activateTab('builder'));
+                tabAlertsBtn.addEventListener('click', () => activateTab('alerts'));
+                // keyboard navigation for tabs
+                [tabBuilderBtn, tabAlertsBtn].forEach((btn, idx, arr) => {
+                    btn.addEventListener('keydown', (e) => {
+                        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            const next = arr[(idx + (e.key === 'ArrowRight' ? 1 : arr.length - 1)) % arr.length];
+                            next.focus();
+                        }
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); btn.click(); }
+                    });
+                });
+
+                // when modal is shown, trap focus; release on close
+                const observer = new MutationObserver((records) => {
+                    records.forEach(r => {
+                        if (r.attributeName === 'class') {
+                            const isActive = howto.classList.contains('active');
+                            if (isActive) trapFocus(howto);
+                            else releaseFocus(howto);
+                        }
+                    });
+                });
+                observer.observe(howto, { attributes: true });
             }
             howto.classList.add('active');
         });

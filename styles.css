@@ -18,6 +18,9 @@
   --opal-2: rgba(236, 72, 153, 0.14); /* soft pink accent */
   --opal-accent: rgba(99, 102, 241, 0.06);
   --overlay: rgba(2, 6, 23, 0.6);
+  /* Badge theming defaults */
+  --badge-amber-bg: #f59e0b; /* amber-500 */
+  --badge-amber-foreground: #0f172a; /* dark text for contrast */
 }
 
 [data-theme="dark"] {
@@ -252,14 +255,32 @@ body {
 .truncate-inline { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
 /* Small status badges used in Alerts */
-.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; line-height: 1; color: white; }
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  line-height: 1;
+  color: var(--badge-foreground, #fff);
+  vertical-align: middle;
+}
+.badge + .badge { margin-left: 6px; }
 .badge.green { background: #16a34a; }
 .badge.red { background: #ef4444; }
 .badge.gray { background: #6b7280; }
+.badge.amber { background: #f59e0b; }
+
+/* Use themeable variables for amber badge and ensure readable foreground */
+.badge.amber { background: var(--badge-amber-bg); color: var(--badge-amber-foreground); }
 
 /* compact table row actions */
 .row-action { background: transparent; border: 1px solid var(--color-border); padding: 4px 6px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
 .row-action:hover { background: var(--color-surface-hover); }
+
+/* Ensure the RTW status cell doesn't wrap badges onto the next line */
+td[title="RTW status"] { white-space: nowrap; }
 
 /* Toast */
 .toast-container { position: fixed; right: 20px; bottom: 20px; z-index: 70; display: flex; flex-direction: column; gap: 8px; }
@@ -281,8 +302,57 @@ body {
 /* Make interactive elements have a clear visible focus state */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 3px var(--opal-1); }
 
+/* Theme swatches in Settings modal */
+.theme-swatch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; }
+.theme-swatch { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-surface); cursor: pointer; transition: transform 120ms ease, box-shadow 120ms ease; }
+.theme-swatch .swatch-label { font-size: 0.85rem; color: var(--color-text); }
+.theme-swatch:hover, .theme-swatch:focus { transform: translateY(-3px); box-shadow: var(--shadow-lg); outline: none; }
+.theme-swatch.selected { box-shadow: 0 6px 20px rgba(0,0,0,0.12); border-color: var(--color-primary); }
+.theme-swatch[data-theme="dark"] { background: linear-gradient(180deg, #111827, #1f2937); color: #f8fafc; }
+.theme-swatch[data-theme="midnight"] { background: linear-gradient(180deg, #020617, #0b1220); color: #f8fafc; }
+.theme-swatch[data-theme="teal"] { background: linear-gradient(180deg, #ccfbf1, #bbf7d0); color: #064e3b; }
+.theme-swatch[data-theme="coral"] { background: linear-gradient(180deg, #fff1f0, #ffecec); color: #371a18; }
+.theme-swatch[data-theme="forest"] { background: linear-gradient(180deg, #f2fbf3, #e6f6ea); color: #022c22; }
+.theme-swatch[data-theme="sunset"] { background: linear-gradient(180deg, #fffaf0, #fff1e6); color: #3b2f2f; }
+.theme-swatch[data-theme="lavender"] { background: linear-gradient(180deg, #f8f0ff, #f2e8ff); color: #2b1b3a; }
+.theme-swatch[data-theme="light"] { background: linear-gradient(180deg, #ffffff, #f8fafc); color: #0f172a; }
+
 /* Drag & drop visual targets for category reordering */
 .category-box.drop-target-before { border-top: 3px solid var(--color-primary); }
 .category-box.drop-target-after { border-bottom: 3px solid var(--color-primary); }
 .category-box.dragging { opacity: 0.6; transform: scale(0.995); }
+
+/* Ensure categories have consistent vertical spacing */
+#categories-container .category-box { margin-bottom: 1rem; }
+
+/* Improve modal/readme typography and spacing */
+.modal-body p { margin: 0 0 0.9rem 0; line-height: 1.6; }
+.modal-body h1, .modal-body h2, .modal-body h3, .modal-body h4 { margin: 1rem 0 0.5rem 0; }
+.modal-body ul, .modal-body ol { margin: 0 0 0.9rem 1.25rem; }
+.modal-body li { margin-bottom: 0.45rem; }
+.modal-body pre { background: rgba(0,0,0,0.04); padding: 8px; border-radius: 6px; overflow: auto; margin-bottom: 0.9rem; }
+.modal-body code { background: rgba(0,0,0,0.04); padding: 2px 6px; border-radius: 4px; }
+
+/* Read Me modal tabs */
+.howto-tab-buttons { display: flex; gap: 8px; }
+.tab-btn { background: var(--color-surface-alt); border: 1px solid var(--color-border); padding: 6px 10px; border-radius: 8px; cursor: pointer; }
+.tab-btn[aria-selected="true"] { background: var(--color-surface); border-color: var(--color-primary); box-shadow: 0 4px 10px rgba(0,0,0,0.08); }
+.tab-panel { padding: 6px 0; }
+
+/* Staff details modal helpers */
+.modal .modal-header-actions { display: flex; gap: 8px; align-items: center; margin-right: 8px; }
+.modal-backdrop.show-raw .modal-body pre { display: block; }
+.modal .modal-body pre { display: none; }
+.modal .text-subtle { color: var(--color-text-muted); }
+.status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; }
+.status-badge.ok { background: #10b981; color: white; }
+.status-badge.warn { background: #f59e0b; color: white; }
+.status-badge.bad { background: #ef4444; color: white; }
+
+/* Compact staff details layout */
+.detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; align-items: start; }
+.detail-row { display: contents; }
+.detail-label { font-size: 0.85rem; color: var(--color-text-muted); }
+.detail-value { font-size: 0.95rem; }
+.small-raw { background: rgba(0,0,0,0.03); padding: 8px; border-radius: 6px; margin-top: 6px; white-space: pre-wrap; font-size: 12px; }
 
