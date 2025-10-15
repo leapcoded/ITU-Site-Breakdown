@@ -2272,28 +2272,59 @@ function computeRTWStats(files, rows) {
     }
 
     exportSvgBtn.addEventListener('click', () => {
-        const summaryEl = resultsEl.querySelector('.p-2.mb-2.rounded.border');
-        const tableEl = resultsEl.querySelector('table');
-        if (!tableEl && !summaryEl) { alert('Nothing to export'); return; }
-        if (summaryEl && tableEl) {
-            const sRect = summaryEl.getBoundingClientRect();
-            const tRect = tableEl.getBoundingClientRect();
-            const width = Math.ceil(Math.max(sRect.width, tRect.width));
-            const height = Math.ceil(sRect.height + tRect.height);
-            const wrapper = document.createElement('div'); wrapper.style.background = '#fff'; wrapper.appendChild(summaryEl.cloneNode(true)); wrapper.appendChild(tableEl.cloneNode(true));
-            exportElementAsSvg(wrapper, 'alerts_with_summary.svg', width, height);
-        } else if (tableEl) exportElementAsSvg(tableEl, 'alerts_table.svg');
-        else exportElementAsSvg(summaryEl, 'alerts_summary.svg');
-    });
-
-    // If there are no rules, don't render the results table (user requested no matched rows visible until they add rules)
-    if (!rules || rules.length === 0) {
         try {
-            // ensure count reflects zero matched rows and keep summaries visible
-            const countEl = tabContent.querySelector('#alerts-count'); if (countEl) countEl.textContent = `0 matched rows`;
-        } catch (e) { /* ignore */ }
-        return; // stop before constructing the table and row handlers
-    }
+            // Prefer the unified alert bar (contains RTW summary and NMC box)
+            const alertBar = resultsEl.querySelector('.alerts-bar');
+            const tableEl = resultsEl.querySelector('table');
+
+            // If we have an alerts bar + table, export them together
+            if (alertBar && tableEl) {
+                const sRect = alertBar.getBoundingClientRect();
+                const tRect = tableEl.getBoundingClientRect();
+                const width = Math.ceil(Math.max(sRect.width, tRect.width));
+                const height = Math.ceil(sRect.height + tRect.height);
+                const wrapper = document.createElement('div');
+                wrapper.style.background = '#fff';
+                wrapper.appendChild(alertBar.cloneNode(true));
+                wrapper.appendChild(tableEl.cloneNode(true));
+                exportElementAsSvg(wrapper, 'alerts_with_summary.svg', width, height);
+                return;
+            }
+
+            // Fallback: try to locate the summary and the NMC box individually
+            const summaryEl = resultsEl.querySelector('.p-3.mb-3.rounded.border') || resultsEl.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50');
+            // If we don't have an alerts bar but we have summary + table, export them
+            if (summaryEl && tableEl) {
+                const sRect = summaryEl.getBoundingClientRect();
+                const tRect = tableEl.getBoundingClientRect();
+                const width = Math.ceil(Math.max(sRect.width, tRect.width));
+                const height = Math.ceil(sRect.height + tRect.height);
+                const wrapper = document.createElement('div');
+                wrapper.style.background = '#fff';
+                wrapper.appendChild(summaryEl.cloneNode(true));
+                wrapper.appendChild(tableEl.cloneNode(true));
+                exportElementAsSvg(wrapper, 'alerts_with_summary.svg', width, height);
+                return;
+            }
+
+            // If only the table exists, export table (unchanged)
+            if (tableEl) {
+                exportElementAsSvg(tableEl, 'alerts_table.svg');
+                return;
+            }
+
+            // If only the summary exists, export summary (unchanged)
+            if (summaryEl) {
+                exportElementAsSvg(summaryEl, 'alerts_summary.svg');
+                return;
+            }
+
+            alert('Nothing to export');
+        } catch (e) {
+            console.warn('SVG export failed', e);
+            alert('SVG export failed');
+        }
+    });
 
     const table = document.createElement('table'); table.className = 'w-full text-sm';
     // Use auto layout so columns size to content; enable horizontal scroll on the container
@@ -2389,9 +2420,6 @@ function computeRTWStats(files, rows) {
                     else if (staffObj.hadShiftAfter) badgeHtml = `<span class="badge red" title="Had shift after sickness, no RTW">No RTW</span>`;
                     else badgeHtml = `<span class="badge gray" title="No recent duty">OK</span>`;
                     // highlight continuing sickness if detected (merged ranges or ongoing end date)
-                    try {
-                        if (staffObj.continuingSickness) badgeHtml += ` <span class="badge amber" title="Continuing sickness">Continuing</span>`;
-                    } catch (e) { /* ignore */ }
                 }
             } catch (e) { badgeHtml = ''; }
             // Enrich the Next Duty display with the shift detail when available (uses nextDutyDetailMap produced by buildResults)
