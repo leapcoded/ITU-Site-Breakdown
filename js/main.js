@@ -1802,6 +1802,7 @@ function computeRTWStats(files, rows) {
     </div>
     `;
 
+    // Replace previous updateNmcPinsCard IIFE with this one (place immediately after summary.innerHTML)
     (function updateNmcPinsCard() {
     try {
         const nmcEl = (typeof resultsEl !== 'undefined' && resultsEl && resultsEl.querySelector)
@@ -1809,43 +1810,52 @@ function computeRTWStats(files, rows) {
         : document.querySelector('.p-3.mb-3.rounded.border.bg-yellow-50') || document.querySelector('.nmc-summary');
         if (!nmcEl) return;
 
-        // Extract a numeric count if present, otherwise use placeholder
+        // Attempt to extract a numeric count from existing content
         const rawText = (nmcEl.textContent || '').trim();
         const found = rawText.match(/(\d+)\s*(pins?|expir)/i);
         const nmcCount = found ? Number(found[1]) : (typeof window.__nmcCount !== 'undefined' ? window.__nmcCount : '—');
 
-        // Replace with markup matching the RTW card style exactly (compact fonts, pill count)
+        // Build markup using shared classes so it matches RTW summary exactly
         nmcEl.innerHTML = `
-        <div style="font-size:13px;display:flex;gap:10px;align-items:center;min-width:260px;padding:6px 8px;border-radius:8px;border:1px solid rgba(0,0,0,0.06);background:#fffaf0;box-sizing:border-box;height:64px">
-            <div style="display:flex;flex-direction:column;justify-content:center;align-items:flex-start;min-width:160px">
-            <div style="font-size:13px;font-weight:600;color:var(--color-text);line-height:1">NMC Pins <span style="font-weight:500;font-size:11px;color:var(--color-text-muted);margin-left:6px">Alert</span></div>
+        <div class="alert-card" style="background:#fffaf0;">
+            <div class="card-left">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <div aria-hidden="true" style="width:10px;height:10px;border-radius:999px;background:#f59e0b"></div>
+                <div class="card-title">NMC Pins</div>
+                <div class="card-sub">Alert</div>
+            </div>
             <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
-                <div style="width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid rgba(0,0,0,0.06);font-weight:700;color:#b85705;font-size:14px">${escapeHtml(String(nmcCount))}</div>
+                <div class="alert-pill" style="color:#b85705">${escapeHtml(String(nmcCount))}</div>
                 <div style="font-size:12px;color:var(--color-text-muted)">pins expiring soon</div>
             </div>
             </div>
-            <div style="margin-left:auto;display:flex;align-items:center">
+            <div class="alert-actions">
             <button id="nmc-expiry-show" class="px-2 py-1 border rounded text-sm" style="font-size:12px;padding:6px 8px">Show list</button>
             </div>
         </div>
         `.trim();
 
-        // Wire the new Show list button to existing handler if available
+        // Wire the new Show list button to the existing handler if present
         const btn = nmcEl.querySelector('#nmc-expiry-show');
         if (btn) {
         btn.addEventListener('click', (ev) => {
             try {
             ev.preventDefault();
-            // If original export/show button exists, trigger it (keeps existing behavior)
-            const existing = document.querySelector('#nmc-expiry-export') || document.querySelector('#nmc-expiry-show-existing');
-            if (existing) { existing.click(); return; }
-            // otherwise dispatch custom event for any listeners
-            const evt = new CustomEvent('nmc:show');
+            // Prefer original existing controls if present
+            const existing = document.querySelector('#nmc-expiry-export') || document.querySelector('#nmc-expiry-show-existing') || document.querySelector('#nmc-expiry-show');
+            if (existing) {
+                existing.click();
+                return;
+            }
+            // Fallback: dispatch custom event for any listeners
+            const evt = new CustomEvent('nmc:show', { detail: {} });
             nmcEl.dispatchEvent(evt);
             } catch (e) { /* ignore */ }
         });
         }
-    } catch (e) { /* safe no-op */ }
+    } catch (e) {
+        /* safe no-op */
+    }
     })();
     // keep `summary` element available; it will be placed into the unified alert bar below
     // wire ignored button immediately so users don't need to click 'Show list' first
