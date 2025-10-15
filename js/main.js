@@ -1632,7 +1632,7 @@ function computeRTWStats(files, rows) {
             // Prefer date association when present. Allow a short post-return window.
             if (flag.parsedDate instanceof Date && !isNaN(flag.parsedDate)) {
                 const fd = new Date(flag.parsedDate.getFullYear(), flag.parsedDate.getMonth(), flag.parsedDate.getDate());
-                const POST_WINDOW_DAYS = 14; // configurable window after sickness end to accept RTW recorded shortly after return
+                const POST_WINDOW_DAYS = 7; // configurable window after sickness end to accept RTW recorded shortly after return
                 const windowEnd = new Date(range.end.getTime() + (POST_WINDOW_DAYS * 24*60*60*1000));
                 return fd.getTime() >= range.start.getTime() && fd.getTime() <= windowEnd.getTime();
             }
